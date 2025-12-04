@@ -1,0 +1,151 @@
+.PHONY: help build up down logs test clean rebuild restart health setup verify secret generate-override
+
+# Default target
+help:
+	@echo "StorageSage Docker Management"
+	@echo ""
+	@echo "Available targets:"
+	@echo "  make setup      - Initial setup (create .env, generate certs)"
+	@echo "  make build       - Build all Docker images"
+	@echo "  make up          - Start all services"
+	@echo "  make down        - Stop all services"
+	@echo "  make logs        - Show logs from all services"
+	@echo "  make test        - Run health checks"
+	@echo "  make clean       - Remove containers, volumes, and images"
+	@echo "  make rebuild     - Rebuild and restart services"
+	@echo "  make restart     - Restart all services"
+	@echo "  make health      - Check service health"
+	@echo "  make frontend    - Build frontend only"
+	@echo "  make backend     - Build backend only"
+	@echo "  make daemon      - Build daemon only"
+	@echo "  make secret      - Generate JWT secret"
+	@echo "  make verify      - Verify environment setup"
+	@echo "  make generate-override - Generate docker-compose override"
+
+# Generate docker-compose override file
+generate-override:
+	@echo "Generating docker-compose override file..."
+	@chmod +x scripts/generate-compose-override.sh 2>/dev/null || true
+	@./scripts/generate-compose-override.sh
+
+# Build all images
+build: generate-override
+	@echo "Building all Docker images..."
+	docker compose build --parallel
+
+# Build specific services
+frontend:
+	@echo "Building frontend..."
+	docker compose build storage-sage-frontend
+
+backend:
+	@echo "Building backend..."
+	docker compose build storage-sage-backend
+
+daemon:
+	@echo "Building daemon..."
+	docker compose build storage-sage-daemon
+
+# Start all services
+up: generate-override
+	@echo "Starting StorageSage services..."
+	docker compose up -d
+	@echo "Waiting for services to be healthy..."
+	@sleep 5
+	@make health
+
+# Stop all services
+down:
+	@echo "Stopping StorageSage services..."
+	docker compose down
+
+# Show logs
+logs:
+	docker compose logs -f
+
+# Show logs for specific service
+logs-backend:
+	docker compose logs -f storage-sage-backend
+
+logs-daemon:
+	docker compose logs -f storage-sage-daemon
+
+logs-prometheus:
+	docker compose logs -f prometheus
+
+logs-frontend:
+	docker compose logs -f storage-sage-frontend
+
+# Run health checks
+test:
+	@echo "Running health checks..."
+	@echo ""
+	@echo "Checking backend..."
+	@curl -k -s https://localhost:8443/api/v1/health 2>/dev/null | head -1 || echo "Backend health check failed"
+	@echo ""
+	@echo "Checking daemon metrics..."
+	@curl -s http://localhost:9090/metrics 2>/dev/null | head -5 || echo "Daemon metrics check failed"
+	@echo ""
+	@echo "Checking Prometheus..."
+	@curl -s http://localhost:9091/-/healthy 2>/dev/null || echo "Prometheus health check failed"
+	@echo ""
+	@echo "Health checks complete"
+
+# Check service health
+health:
+	@echo "Service Health Status:"
+	@docker compose ps
+	@echo ""
+	@echo "Health Check Details:"
+	@docker inspect --format='{{.Name}}: {{.State.Health.Status}}' $$(docker ps -q --filter "name=storage-sage") 2>/dev/null || echo "No health checks available"
+
+# Clean everything
+clean:
+	@echo "Cleaning up..."
+	docker compose down -v --rmi local
+	rm -f docker-compose.override.yml
+	@echo "Cleanup complete"
+
+# Rebuild and restart
+rebuild: down build up
+
+# Restart services
+restart:
+	docker compose restart
+
+# Generate JWT secret
+secret:
+	@echo "Generating JWT secret..."
+	@openssl rand -base64 32
+
+# Setup (first time)
+setup:
+	@echo "Setting up StorageSage..."
+	@if [ ! -f .env ]; then \
+		cp .env.example .env; \
+		echo "Created .env file. Please edit it with your configuration."; \
+	fi
+	@if [ ! -f web/certs/server.crt ] || [ ! -f web/certs/server.key ]; then \
+		echo "Generating self-signed certificates..."; \
+		mkdir -p web/certs; \
+		openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+			-keyout web/certs/server.key \
+			-out web/certs/server.crt \
+			-subj "/CN=localhost"; \
+		echo "Certificates generated in web/certs/"; \
+	fi
+	@if [ ! -f web/config/config.yaml ]; then \
+		echo "Creating default config directory..."; \
+		mkdir -p web/config; \
+		echo "Please create web/config/config.yaml with your configuration."; \
+	fi
+	@echo "Setup complete. Run 'make build' to build images."
+
+# Verify environment
+verify:
+	@echo "Verifying environment..."
+	@test -f .env || (echo "ERROR: .env file not found. Run 'make setup' first." && exit 1)
+	@test -f web/certs/server.crt || (echo "WARNING: TLS certificate not found. Run 'make setup' to generate." && exit 1)
+	@test -f web/certs/server.key || (echo "WARNING: TLS key not found. Run 'make setup' to generate." && exit 1)
+	@test -f prometheus/prometheus.yml || (echo "ERROR: Prometheus config not found." && exit 1)
+	@echo "Environment verified."

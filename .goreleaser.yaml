@@ -1,0 +1,223 @@
+# GoReleaser configuration for StorageSage
+# https://goreleaser.com
+
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod download
+
+builds:
+  # Main daemon
+  - id: storage-sage
+    main: ./cmd/storage-sage
+    binary: storage-sage
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.gitCommit={{.Commit}}
+      - -X main.buildDate={{.Date}}
+    tags:
+      - sqlite_omit_load_extension
+
+  # Query tool
+  - id: storage-sage-query
+    main: ./cmd/storage-sage-query
+    binary: storage-sage-query
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.gitCommit={{.Commit}}
+    tags:
+      - sqlite_omit_load_extension
+
+archives:
+  - id: storage-sage
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE
+      - README.md
+      - INSTALL.md
+      - test-config.yaml
+      - docs/*
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - 'typo'
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: 'Bug Fixes'
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: 'Performance Improvements'
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: Others
+      order: 999
+
+release:
+  github:
+    owner: ChrisB0-2
+    name: storage-sage
+  draft: false
+  prerelease: auto
+  mode: append
+  header: |
+    ## StorageSage {{.Tag}} Release
+    
+    ### Installation
+    
+    ```bash
+    # Linux AMD64
+    wget https://github.com/ChrisB0-2/storage-sage/releases/download/{{.Tag}}/storage-sage_{{.Tag}}_linux_amd64.tar.gz
+    tar xzf storage-sage_{{.Tag}}_linux_amd64.tar.gz
+    sudo mv storage-sage /usr/local/bin/
+    
+    # Verify
+    storage-sage --version
+    ```
+    
+    See [INSTALL.md](https://github.com/ChrisB0-2/storage-sage/blob/main/INSTALL.md) for complete installation instructions.
+
+  footer: |
+    ## Docker Images
+    
+    ```bash
+    docker pull ghcr.io/ChrisB0-2/storage-sage:{{.Tag}}
+    ```
+    
+    ## What's Changed
+    
+    **Full Changelog**: https://github.com/ChrisB0-2/storage-sage/compare/{{.PreviousTag}}...{{.Tag}}
+
+dockers:
+  # Daemon image
+  - image_templates:
+      - "ghcr.io/ChrisB0-2/storage-sage:{{ .Tag }}-amd64"
+      - "ghcr.io/ChrisB0-2/storage-sage:latest-amd64"
+    use: buildx
+    dockerfile: cmd/storage-sage/Dockerfile
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+    goos: linux
+    goarch: amd64
+
+  - image_templates:
+      - "ghcr.io/ChrisB0-2/storage-sage:{{ .Tag }}-arm64"
+      - "ghcr.io/ChrisB0-2/storage-sage:latest-arm64"
+    use: buildx
+    dockerfile: cmd/storage-sage/Dockerfile
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+    goos: linux
+    goarch: arm64
+
+docker_manifests:
+  - name_template: "ghcr.io/ChrisB0-2/storage-sage:{{ .Tag }}"
+    image_templates:
+      - "ghcr.io/ChrisB0-2/storage-sage:{{ .Tag }}-amd64"
+      - "ghcr.io/ChrisB0-2/storage-sage:{{ .Tag }}-arm64"
+
+  - name_template: "ghcr.io/ChrisB0-2/storage-sage:latest"
+    image_templates:
+      - "ghcr.io/ChrisB0-2/storage-sage:latest-amd64"
+      - "ghcr.io/ChrisB0-2/storage-sage:latest-arm64"
+
+nfpms:
+  - id: storage-sage
+    package_name: storage-sage
+    vendor: StorageSage Contributors
+    homepage: https://github.com/ChrisB0-2/storage-sage
+    maintainer: StorageSage Team <maintainers@example.com>
+    description: Automated filesystem cleanup daemon with monitoring
+    license: MIT
+    formats:
+      - deb
+      - rpm
+      - apk
+    bindir: /usr/local/bin
+    contents:
+      - src: test-config.yaml
+        dst: /etc/storage-sage/config.yaml.example
+        type: config|noreplace
+      - src: scripts/storage-sage.service
+        dst: /usr/lib/systemd/system/storage-sage.service
+      - dst: /var/lib/storage-sage
+        type: dir
+        file_info:
+          mode: 0755
+          owner: storagesage
+          group: storagesage
+      - dst: /var/log/storage-sage
+        type: dir
+        file_info:
+          mode: 0755
+          owner: storagesage
+          group: storagesage
+    scripts:
+      preinstall: scripts/preinstall.sh
+      postinstall: scripts/postinstall.sh
+      preremove: scripts/preremove.sh
+    deb:
+      lintian_overrides:
+        - statically-linked-binary
+        - changelog-file-missing-in-native-package
+    rpm:
+      signature:
+        key_file: '{{ .Env.GPG_KEY_FILE }}'
+
+announce:
+  skip: '{{gt .Patch 0}}'
+  discord:
+    enabled: false
+  slack:
+    enabled: false

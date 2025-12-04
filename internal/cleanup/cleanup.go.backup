@@ -1,0 +1,91 @@
+package cleanup
+
+import (
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/chris/storage-sage/internal/config"
+	"github.com/chris/storage-sage/internal/metrics"
+	"github.com/chris/storage-sage/internal/scan"
+)
+
+func withinAllowed(path string, cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	cleaned := filepath.Clean(path)
+	for _, root := range cfg.ScanPaths {
+		if hasPathPrefix(cleaned, root) {
+			return true
+		}
+	}
+	for _, rule := range cfg.Paths {
+		if hasPathPrefix(cleaned, rule.Path) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPathPrefix(path, root string) bool {
+	root = filepath.Clean(root)
+	if path == root {
+		return true
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	return !startsWithDotDot(rel)
+}
+
+func startsWithDotDot(rel string) bool {
+	if rel == ".." {
+		return true
+	}
+	prefix := ".." + string(os.PathSeparator)
+	return strings.HasPrefix(rel, prefix)
+}
+
+func Cleanup(cfg *config.Config, candidates []scan.Candidate, dryRun bool, logger *log.Logger) (int, int64, error) {
+	var (
+		count int
+		freed int64
+	)
+
+	if logger == nil {
+		logger = log.Default()
+	}
+
+	for _, cand := range candidates {
+		if !withinAllowed(cand.Path, cfg) {
+			logger.Printf("SKIP unsafe path: %s", cand.Path)
+			metrics.ErrorsTotal.Inc()
+			continue
+		}
+
+		if dryRun {
+			logger.Printf("DRY-RUN delete: %s (%d bytes)", cand.Path, cand.Size)
+			continue
+		}
+
+		if err := os.Remove(cand.Path); err != nil {
+			logger.Printf("ERROR deleting %s: %v", cand.Path, err)
+			metrics.ErrorsTotal.Inc()
+			continue
+		}
+
+		logger.Printf("DELETE %s (%d bytes)", cand.Path, cand.Size)
+		metrics.FilesDeletedTotal.Inc()
+		metrics.BytesFreedTotal.Add(float64(cand.Size))
+		count++
+		freed += cand.Size
+	}
+
+	return count, freed, nil
+}

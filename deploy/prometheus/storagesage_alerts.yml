@@ -1,0 +1,166 @@
+groups:
+  - name: storagesage_service_health
+    interval: 30s
+    rules:
+      # Critical: Daemon is down
+      - alert: StorageSageDaemonDown
+        expr: storagesage_daemon_healthy{component="overall"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: daemon
+        annotations:
+          summary: "StorageSage daemon is unhealthy"
+          description: "StorageSage daemon health check has been failing for more than 5 minutes. Component: {{ $labels.component }}"
+
+      # Critical: Service not responding (no metrics)
+      - alert: StorageSageMetricsMissing
+        expr: absent(storagesage_daemon_healthy)
+        for: 5m
+        labels:
+          severity: critical
+          component: daemon
+        annotations:
+          summary: "StorageSage metrics endpoint not responding"
+          description: "No metrics received from StorageSage for more than 5 minutes. Service may be down."
+
+      # Warning: Component unhealthy
+      - alert: StorageSageComponentUnhealthy
+        expr: storagesage_component_healthy == 0
+        for: 2m
+        labels:
+          severity: warning
+          component: "{{ $labels.component }}"
+        annotations:
+          summary: "StorageSage component {{ $labels.component }} is unhealthy"
+          description: "Component {{ $labels.component }} health check ({{ $labels.check_type }}) has been failing for more than 2 minutes."
+
+      # Warning: Frequent restarts
+      - alert: StorageSageFrequentRestarts
+        expr: rate(storagesage_daemon_restarts_total[1h]) > 3
+        for: 5m
+        labels:
+          severity: warning
+          component: daemon
+        annotations:
+          summary: "StorageSage daemon restarting frequently"
+          description: "StorageSage has restarted {{ $value | humanize }} times per hour. Reason: {{ $labels.reason }}"
+
+      # Warning: Service uptime low (restarted recently)
+      - alert: StorageSageRecentRestart
+        expr: (time() - storagesage_daemon_start_timestamp_seconds) < 300
+        for: 1m
+        labels:
+          severity: info
+          component: daemon
+        annotations:
+          summary: "StorageSage daemon recently restarted"
+          description: "StorageSage daemon restarted {{ $value | humanizeDuration }} ago."
+
+      # Warning: Health check failures accumulating
+      - alert: StorageSageHealthCheckFailures
+        expr: storagesage_health_check_failures_consecutive > 5
+        for: 1m
+        labels:
+          severity: warning
+          component: "{{ $labels.component }}"
+        annotations:
+          summary: "StorageSage component {{ $labels.component }} has {{ $value }} consecutive health check failures"
+          description: "Component {{ $labels.component }} has failed {{ $value }} consecutive health checks."
+
+      # Warning: Health check taking too long
+      - alert: StorageSageHealthCheckSlow
+        expr: storagesage_health_check_duration_seconds{quantile="0.95"} > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: "{{ $labels.component }}"
+        annotations:
+          summary: "StorageSage health checks are slow"
+          description: "Health checks for {{ $labels.component }} are taking {{ $value }}s (p95), which may indicate performance issues."
+
+      # Critical: Systemd unit failed
+      - alert: StorageSageSystemdUnitFailed
+        expr: storagesage_systemd_unit_state{state="failed"} == -1
+        for: 1m
+        labels:
+          severity: critical
+          component: systemd
+        annotations:
+          summary: "StorageSage systemd unit {{ $labels.unit }} has failed"
+          description: "Systemd unit {{ $labels.unit }} is in failed state."
+
+      # Warning: Systemd unit inactive
+      - alert: StorageSageSystemdUnitInactive
+        expr: storagesage_systemd_unit_state{state="inactive"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: systemd
+        annotations:
+          summary: "StorageSage systemd unit {{ $labels.unit }} is inactive"
+          description: "Systemd unit {{ $labels.unit }} has been inactive for more than 5 minutes."
+
+  - name: storagesage_cleanup_health
+    interval: 30s
+    rules:
+      # Warning: No cleanup runs recently
+      - alert: StorageSageNoRecentCleanup
+        expr: (time() - storagesage_cleanup_last_run_timestamp_seconds) > 7200
+        for: 10m
+        labels:
+          severity: warning
+          component: cleanup
+        annotations:
+          summary: "StorageSage has not run cleanup recently"
+          description: "Last cleanup run was {{ $value | humanizeDuration }} ago. Expected interval is typically 1 hour."
+
+      # Critical: Cleanup errors increasing
+      - alert: StorageSageCleanupErrors
+        expr: rate(storagesage_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+          component: cleanup
+        annotations:
+          summary: "StorageSage cleanup errors increasing"
+          description: "Cleanup errors occurring at {{ $value | humanize }} per second."
+
+      # Warning: No deletions when disk is full
+      - alert: StorageSageDiskFullNoDeletions
+        expr: |
+          storagesage_daemon_free_space_percent < 10
+          and
+          increase(storagesage_cleanup_files_deleted_total[1h]) == 0
+        for: 30m
+        labels:
+          severity: warning
+          component: cleanup
+        annotations:
+          summary: "Disk {{ $labels.path }} is full but no files are being deleted"
+          description: "Free space is {{ $value }}% but no cleanup actions have occurred in the past hour. Check cleanup rules."
+
+  - name: storagesage_resource_limits
+    interval: 30s
+    rules:
+      # Warning: High error rate
+      - alert: StorageSageHighErrorRate
+        expr: rate(storagesage_errors_total[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: daemon
+        annotations:
+          summary: "StorageSage error rate is high"
+          description: "Error rate is {{ $value | humanize }} errors per second."
+
+      # Info: Service running for extended period
+      - alert: StorageSageLongUptime
+        expr: (time() - storagesage_daemon_start_timestamp_seconds) > 2592000
+        for: 1h
+        labels:
+          severity: info
+          component: daemon
+        annotations:
+          summary: "StorageSage has been running for over 30 days"
+          description: "StorageSage uptime is {{ $value | humanizeDuration }}. Consider planned restart for maintenance."

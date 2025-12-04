@@ -1,0 +1,249 @@
+services:
+  # StorageSage Daemon - Core cleanup service
+  storage-sage-daemon:
+    build:
+      context: .
+      dockerfile: cmd/storage-sage/Dockerfile
+    container_name: storage-sage-daemon
+    user: "1000:1000"
+    image: storage-sage:daemon-latest
+    restart: unless-stopped
+    networks:
+      - storage-sage-network
+    ports:
+      - "${DAEMON_METRICS_PORT:-9090}:9090"
+    volumes:
+      # Configuration - make writable so daemon can read UI-updated config
+      - ./web/config:/etc/storage-sage:rw
+      # Logs (persistent)
+      - storage-sage-logs:/var/log/storage-sage
+      # NFS/Storage mounts (read-only for safety, adjust as needed)
+      - ${NFS_MOUNT_PATH:-/data}:/data:ro
+      - ${SCAN_PATH_1:-/var/log}:/var/log:rw
+      # SCAN_PATH_2 is handled via docker-compose.override.yml (auto-generated)
+      # Test workspace for testing cleanup functionality
+      - /tmp/storage-sage-test-workspace:/test-workspace:z
+      - /tmp/demo-custom-path:/tmp/demo-custom-path:z
+      # Mount host /tmp to allow UI-configured paths to work
+      - /tmp:/tmp:rw
+      # Database (persistent) - ADD THIS
+      - storage-sage-db:/var/lib/storage-sage:rw
+    environment:
+      - TZ=${TZ:-UTC}
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/metrics"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    read_only: false  # Set to true if no writes needed (except logs)
+
+  # Prometheus - Metrics aggregation
+  # COMMENTED OUT - Using system Prometheus instead
+  # prometheus:
+  #   image: prom/prometheus:v2.48.0
+  #   container_name: storage-sage-prometheus
+  #   restart: unless-stopped
+  #   networks:
+  #     - storage-sage-network
+  #   ports:
+  #     - "${PROMETHEUS_PORT:-9091}:9090"
+  #   volumes:
+  #     - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+  #     - prometheus-data:/prometheus
+  #   command:
+  #     - '--config.file=/etc/prometheus/prometheus.yml'
+  #     - '--storage.tsdb.path=/prometheus'
+  #     - '--storage.tsdb.retention.time=30d'
+  #     - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+  #     - '--web.console.templates=/usr/share/prometheus/consoles'
+  #     - '--web.enable-lifecycle'
+  #   healthcheck:
+  #     test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+  #     interval: 30s
+  #     timeout: 3s
+  #     retries: 3
+  #     start_period: 10s
+  #   security_opt:
+  #     - no-new-privileges:true
+
+  # Backend API Server
+  storage-sage-backend:
+    build:
+      context: .
+      dockerfile: web/backend/Dockerfile
+    container_name: storage-sage-backend
+    image: storage-sage:backend-latest
+    restart: unless-stopped
+    networks:
+      - storage-sage-network
+    ports:
+      - "${BACKEND_PORT:-8443}:8443"
+    volumes:
+      # Configuration - make writable for UI updates
+      - ./web/config:/etc/storage-sage:rw
+      # TLS certificates
+      - ./web/certs:/app/certs:ro
+      # Frontend build (served by backend) - check both dist and build
+      - ./web/frontend/dist:/app/frontend/dist:ro
+      - ./web/frontend/build:/app/frontend/build:ro
+      # Logs
+      - storage-sage-logs:/app/logs
+      - storage-sage-logs:/var/log/storage-sage:ro
+      # Database (read-only for backend) - ADD THIS
+      - storage-sage-db:/var/lib/storage-sage:rw
+    secrets:
+      - jwt_secret
+    environment:
+      - JWT_SECRET_FILE=/run/secrets/jwt_secret
+      - JWT_EXPIRY=${JWT_EXPIRY:-24h}
+      - PROMETHEUS_URL=http://host.docker.internal:9091  # System Prometheus
+      - TZ=${TZ:-UTC}
+    depends_on:
+      # Remove prometheus from depends_on
+      storage-sage-daemon:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--no-check-certificate", "-O", "/dev/null", "https://localhost:8443/api/v1/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+
+  # Frontend - React UI (optional, if serving separately from backend)
+  storage-sage-frontend:
+    build:
+      context: ./web/frontend
+      dockerfile: Dockerfile
+    container_name: storage-sage-frontend
+    image: storage-sage:frontend-latest
+    restart: unless-stopped
+    networks:
+      - storage-sage-network
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    environment:
+      - API_URL=${API_URL:-https://localhost:8443}
+    depends_on:
+      - storage-sage-backend
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+    profiles:
+      - frontend-standalone  # Only start with --profile frontend-standalone
+
+  # Loki - Log aggregation
+  loki:
+    image: grafana/loki:2.9.2
+    container_name: storage-sage-loki
+    restart: unless-stopped
+    networks:
+      - storage-sage-network
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    volumes:
+      - ./loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3100/ready"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    mem_reservation: 256m
+
+  # Promtail - Log shipper
+  promtail:
+    image: grafana/promtail:2.9.2
+    container_name: storage-sage-promtail
+    restart: unless-stopped
+    networks:
+      - storage-sage-network
+    ports:
+      - "${PROMTAIL_PORT:-9080}:9080"
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
+      - storage-sage-logs:/var/log/storage-sage:ro
+      - promtail-positions:/tmp
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9080/ready"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    mem_reservation: 128m
+
+  # Grafana (optional - for visualization)
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: storage-sage-grafana
+    restart: unless-stopped
+    networks:
+      - storage-sage-network
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:3001}
+      - GF_INSTALL_PLUGINS=
+    depends_on:
+      - loki
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    user: "472:472"
+    profiles:
+      - grafana  # Only start with --profile grafana
+
+networks:
+  storage-sage-network:
+    driver: bridge
+    name: storage-sage-network
+
+volumes:
+  # prometheus-data:  # Comment out or remove
+  #   name: storage-sage-prometheus-data
+  grafana-data:
+    name: storage-sage-grafana-data
+  storage-sage-logs:
+    name: storage-sage-logs
+  loki-data:
+    name: storage-sage-loki-data
+  promtail-positions:
+    name: storage-sage-promtail-positions
+  storage-sage-db:  # ADD THIS
+    name: storage-sage-db
+
+secrets:
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
+

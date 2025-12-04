@@ -1,0 +1,47 @@
+[Unit]
+Description=StorageSage Filesystem Cleanup Daemon
+Documentation=https://github.com/yourusername/storage-sage
+After=network.target
+
+[Service]
+Type=simple
+User=storagesage
+Group=storagesage
+
+# Main service
+ExecStart=/usr/local/bin/storage-sage --config /etc/storage-sage/config.yaml
+
+# Reload configuration on SIGHUP
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=storage-sage
+
+# Working directory
+WorkingDirectory=/var/lib/storage-sage
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/storage-sage /var/log/storage-sage
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,141 @@
+# Prometheus Configuration for StorageSage Observability Stack
+# Scrapes metrics from all StorageSage services and system components
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'storagesage'
+    environment: 'production'
+
+# Alertmanager configuration (optional - uncomment if using)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093
+
+# Load alerting rules
+rule_files:
+  - '/etc/prometheus/alerts.yml'
+
+# Scrape configurations
+scrape_configs:
+  # ============================================================================
+  # PROMETHEUS SELF-MONITORING
+  # ============================================================================
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          component: 'observability'
+          service: 'prometheus'
+
+  # ============================================================================
+  # STORAGESAGE DAEMON - Core cleanup engine
+  # ============================================================================
+  - job_name: 'storagesage-daemon'
+    static_configs:
+      - targets: ['storage-sage-daemon:9090']
+        labels:
+          component: 'daemon'
+          service: 'storage-sage'
+          job: 'storage-sage'
+
+    # Relabel to add instance-level metadata
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'daemon'
+
+      - source_labels: [__address__]
+        target_label: __address__
+        replacement: 'storage-sage-daemon:9090'
+
+    # Keep only storagesage_* metrics from daemon
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'storagesage_.*|storage_sage_.*|go_.*|process_.*'
+        action: keep
+
+  # ============================================================================
+  # STORAGESAGE BACKEND - API server metrics
+  # ============================================================================
+  - job_name: 'storagesage-backend'
+    static_configs:
+      - targets: ['storage-sage-backend:9090']
+        labels:
+          component: 'backend'
+          service: 'storage-sage'
+          job: 'storage-sage'
+
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'backend'
+
+      - source_labels: [__address__]
+        target_label: __address__
+        replacement: 'storage-sage-backend:9090'
+
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'storagesage_.*|http_.*|go_.*|process_.*'
+        action: keep
+
+  # ============================================================================
+  # NODE EXPORTER - System-level metrics (CPU, Memory, Disk, Network)
+  # ============================================================================
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['host.docker.internal:9100']
+        labels:
+          component: 'system'
+          service: 'node-exporter'
+
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'storagesage-host'
+
+  # ============================================================================
+  # LOKI - Log aggregation system metrics
+  # ============================================================================
+  - job_name: 'loki'
+    static_configs:
+      - targets: ['loki:3100']
+        labels:
+          component: 'observability'
+          service: 'loki'
+
+  # ============================================================================
+  # PROMTAIL - Log shipping agent metrics
+  # ============================================================================
+  - job_name: 'promtail'
+    static_configs:
+      - targets: ['promtail:9080']
+        labels:
+          component: 'observability'
+          service: 'promtail'
+
+  # ============================================================================
+  # GRAFANA - Visualization platform metrics
+  # ============================================================================
+  - job_name: 'grafana'
+    static_configs:
+      - targets: ['grafana:3000']
+        labels:
+          component: 'observability'
+          service: 'grafana'
+
+  # ============================================================================
+  # DOCKER CONTAINERS - Container-level metrics (requires cAdvisor)
+  # Uncomment if you deploy cAdvisor for container metrics
+  # ============================================================================
+  # - job_name: 'cadvisor'
+  #   static_configs:
+  #     - targets: ['cadvisor:8080']
+  #       labels:
+  #         component: 'system'
+  #         service: 'cadvisor'

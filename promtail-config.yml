@@ -1,0 +1,34 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: info
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: storage-sage
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: storage-sage
+          __path__: /var/log/storage-sage/cleanup.log
+    
+    pipeline_stages:
+      # Parse structured log format
+      - regex:
+          expression: '^\[(?P<timestamp>[^\]]+)\]\s+(?P<action>\w+)\s+path=(?P<path>\S+)\s+object=(?P<object_type>\S+)\s+size=(?P<size>\d+)'
+      
+      # Extract labels for indexing
+      - labels:
+          action:
+          object_type:
+      
+      # Parse timestamp
+      - timestamp:
+          source: timestamp
+          format: RFC3339

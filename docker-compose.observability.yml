@@ -1,0 +1,192 @@
+version: '3.8'
+
+# StorageSage Observability Stack
+# Full monitoring suite: Prometheus + Loki + Promtail + Grafana + Node Exporter
+# Integrated with StorageSage daemon, backend, and frontend services
+
+services:
+  # ============================================================================
+  # METRICS COLLECTION - Prometheus
+  # ============================================================================
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: storagesage-prometheus
+    restart: unless-stopped
+    user: "${USER_ID:-1000}:${USER_ID:-1000}"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    ports:
+      - "9091:9090"  # Prometheus UI
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./config/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - storagesage-observability
+      - storagesage-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      com.storagesage.component: "observability"
+      com.storagesage.service: "metrics"
+
+  # ============================================================================
+  # LOG AGGREGATION - Loki
+  # ============================================================================
+  loki:
+    image: grafana/loki:2.9.8
+    container_name: storagesage-loki
+    restart: unless-stopped
+    user: "${USER_ID:-1000}:${USER_ID:-1000}"
+    ports:
+      - "3100:3100"  # Loki API
+    volumes:
+      - ./config/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - storagesage-observability
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3100/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      com.storagesage.component: "observability"
+      com.storagesage.service: "logs"
+
+  # ============================================================================
+  # LOG SHIPPING - Promtail
+  # ============================================================================
+  promtail:
+    image: grafana/promtail:2.9.8
+    container_name: storagesage-promtail
+    restart: unless-stopped
+    user: "${USER_ID:-1000}:${USER_ID:-1000}"
+    ports:
+      - "9080:9080"  # Promtail HTTP API
+    volumes:
+      - ./config/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - promtail-positions:/tmp/positions
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      - storagesage-observability
+    depends_on:
+      - loki
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9080/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    labels:
+      com.storagesage.component: "observability"
+      com.storagesage.service: "log-shipper"
+
+  # ============================================================================
+  # SYSTEM METRICS - Node Exporter
+  # ============================================================================
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: storagesage-node-exporter
+    restart: unless-stopped
+    command:
+      - '--path.rootfs=/host'
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host:ro,rslave
+    network_mode: host
+    labels:
+      com.storagesage.component: "observability"
+      com.storagesage.service: "host-metrics"
+
+  # ============================================================================
+  # VISUALIZATION - Grafana
+  # ============================================================================
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: storagesage-grafana
+    restart: unless-stopped
+    user: "${USER_ID:-1000}:${USER_ID:-1000}"
+    ports:
+      - "3001:3000"  # Grafana UI
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3001
+      - GF_INSTALL_PLUGINS=
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_LOG_MODE=console
+      - GF_LOG_LEVEL=info
+    volumes:
+      - ./config/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./config/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    networks:
+      - storagesage-observability
+    depends_on:
+      - prometheus
+      - loki
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      com.storagesage.component: "observability"
+      com.storagesage.service: "visualization"
+
+# ============================================================================
+# NETWORKS
+# ============================================================================
+networks:
+  storagesage-observability:
+    name: storagesage-observability
+    driver: bridge
+
+  # Connect to existing StorageSage network for service discovery
+  storagesage-network:
+    external: true
+    name: storagesage-network
+
+# ============================================================================
+# PERSISTENT STORAGE
+# ============================================================================
+volumes:
+  prometheus-data:
+    name: storagesage-prometheus-data
+    driver: local
+
+  loki-data:
+    name: storagesage-loki-data
+    driver: local
+
+  grafana-data:
+    name: storagesage-grafana-data
+    driver: local
+
+  promtail-positions:
+    name: storagesage-promtail-positions
+    driver: local

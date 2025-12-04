@@ -1,0 +1,7 @@
+scan_paths:
+  - "/var/log"
+age_off_days: 7
+min_free_percent: 10
+interval_minutes: 15
+prometheus:
+  port: 9090

@@ -1,0 +1,52 @@
+scan_paths:
+    - /var/log
+    - /test-workspace
+    - /tmp/storage-sage-test-workspace  # ADD THIS
+
+min_free_percent: 10
+age_off_days: 0
+interval_minutes: 15
+
+paths:
+    - path: /test-workspace/var/log
+      age_off_days: 10
+      min_free_percent: 10
+      max_free_percent: 30
+      target_free_percent: 25
+      priority: 1
+      stack_threshold: 98
+      stack_age_days: 14
+    
+    - path: /data/work
+      age_off_days: 7
+      min_free_percent: 10
+      max_free_percent: 90
+      target_free_percent: 80
+      priority: 2
+      stack_threshold: 98
+      stack_age_days: 14
+    
+    # ADD THIS - Test workspace for active server simulation
+    - path: /tmp/storage-sage-test-workspace
+      age_off_days: 7
+      min_free_percent: 5
+      max_free_percent: 90
+      target_free_percent: 80
+      priority: 3
+      stack_threshold: 95
+      stack_age_days: 14
+
+prometheus:
+    port: 9090
+
+logging:
+    rotation_days: 30
+
+resource_limits:
+    max_cpu_percent: 10
+
+cleanup_options:
+    recursive: true
+    delete_dirs: false
+
+nfs_timeout_seconds: 5

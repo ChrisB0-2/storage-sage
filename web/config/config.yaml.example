@@ -1,0 +1,31 @@
+# StorageSage Configuration
+# This file is managed via the Web UI
+# Edit at: https://localhost:8443 (Config Editor)
+
+# Basic scan paths
+scan_paths: []
+
+# Global defaults
+age_off_days: 7
+min_free_percent: 10
+interval_minutes: 15
+
+# Prometheus metrics
+prometheus:
+  port: 9090
+
+# Logging
+logging:
+  rotation_days: 30
+
+# Resource limits
+resource_limits:
+  max_cpu_percent: 10.0
+
+# Cleanup options
+cleanup_options:
+  recursive: true
+  delete_dirs: false
+
+# NFS timeout
+nfs_timeout_seconds: 5

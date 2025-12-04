@@ -1,0 +1,79 @@
+# Grafana Datasources - Auto-provisioned on startup
+# Connects Grafana to Prometheus (metrics) and Loki (logs)
+
+apiVersion: 1
+
+# List of datasources to insert/update depending on what's available in the database
+datasources:
+  # ============================================================================
+  # PROMETHEUS - Metrics datasource
+  # ============================================================================
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    uid: prometheus-storagesage
+    isDefault: true
+    editable: false
+    version: 1
+
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s
+      queryTimeout: 60s
+      defaultRegion: us-east-1
+      tlsSkipVerify: false
+      manageAlerts: true
+      prometheusType: Prometheus
+      prometheusVersion: 2.54.1
+      cacheLevel: High
+      incrementalQuerying: true
+      incrementalQueryOverlapWindow: 10m
+      disableRecordingRules: false
+      customQueryParameters: ""
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: loki-storagesage
+
+    # Example queries for quick testing
+    # exemplarTraceIdDestinations:
+    #   - name: traceID
+    #     datasourceUid: tempo
+
+  # ============================================================================
+  # LOKI - Logs datasource
+  # ============================================================================
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    uid: loki-storagesage
+    isDefault: false
+    editable: false
+    version: 1
+
+    jsonData:
+      httpMethod: POST
+      maxLines: 1000
+      timeout: 60
+      derivedFields:
+        # Extract trace IDs from logs and link to Prometheus
+        - datasourceUid: prometheus-storagesage
+          matcherRegex: "trace_id=(\\w+)"
+          name: TraceID
+          url: "$${__value.raw}"
+
+        # Extract file paths from deletion logs
+        - matcherRegex: "path=([^\\s]+)"
+          name: FilePath
+          url: ""
+
+        # Extract error codes
+        - matcherRegex: "error_code=(\\d+)"
+          name: ErrorCode
+          url: ""
+
+# Deletable datasources (prevent manual datasource additions)
+deleteDatasources:
+  - name: TestData
+    orgId: 1

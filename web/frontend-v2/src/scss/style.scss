@@ -1,0 +1,41 @@
+// If you want to override variables do it here
+@import "variables";
+
+// Import CoreUI styles
+@import "@coreui/coreui/scss/coreui";
+
+// CoreUI React components include their own styles via JS
+
+// Custom styles for StorageSage
+.sidebar-brand-full {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.nav-icon-bullet {
+  display: inline-block;
+  width: 0.375rem;
+  height: 0.375rem;
+  margin-right: 0.5rem;
+  border-radius: 50%;
+  background-color: rgba(255, 255, 255, 0.5);
+}
+
+// Spinner for loading states
+.sk-spinner-pulse {
+  width: 40px;
+  height: 40px;
+  margin: 100px auto;
+  background-color: #321fdb;
+  border-radius: 100%;
+  animation: sk-pulse 1.2s infinite ease-in-out;
+}
+
+@keyframes sk-pulse {
+  0%, 80%, 100% {
+    transform: scale(0);
+  }
+  40% {
+    transform: scale(1);
+  }
+}

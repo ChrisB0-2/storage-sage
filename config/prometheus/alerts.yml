@@ -1,0 +1,279 @@
+# Prometheus Alerting Rules for StorageSage
+# Production-grade alerts for storage management, system health, and observability
+
+groups:
+  # ============================================================================
+  # STORAGE ALERTS - Critical disk space and cleanup issues
+  # ============================================================================
+  - name: storagesage_storage
+    interval: 30s
+    rules:
+      - alert: CriticalDiskSpaceLow
+        expr: storage_sage_free_space_percent < 5
+        for: 5m
+        labels:
+          severity: critical
+          component: storage
+        annotations:
+          summary: "CRITICAL: Disk space below 5% on {{ $labels.path }}"
+          description: "Free space: {{ $value }}% on {{ $labels.path }}. Immediate action required."
+
+      - alert: LowDiskSpace
+        expr: storage_sage_free_space_percent < 10
+        for: 5m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "Low disk space on {{ $labels.path }}"
+          description: "Free space: {{ $value }}% on {{ $labels.path }}. Cleanup may be triggered."
+
+      - alert: DiskSpaceNotRecovering
+        expr: storage_sage_free_space_percent < 15 and rate(storage_sage_free_space_percent[10m]) < 0
+        for: 15m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "Disk space continuously decreasing on {{ $labels.path }}"
+          description: "Free space at {{ $value }}% and declining. Verify cleanup is working."
+
+  # ============================================================================
+  # CLEANUP OPERATION ALERTS
+  # ============================================================================
+  - name: storagesage_cleanup
+    interval: 30s
+    rules:
+      - alert: NoRecentCleanup
+        expr: (time() - storage_sage_cleanup_last_run_timestamp) > 3600
+        for: 10m
+        labels:
+          severity: warning
+          component: daemon
+        annotations:
+          summary: "No cleanup execution in last hour"
+          description: "Last cleanup: {{ $value | humanizeDuration }}. Check daemon health."
+
+      - alert: CleanupFailureRate
+        expr: rate(storagesage_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: daemon
+        annotations:
+          summary: "Elevated cleanup error rate"
+          description: "Error rate: {{ $value | humanize }}/sec. Check daemon logs."
+
+      - alert: StackModeActivated
+        expr: storage_sage_cleanup_last_mode{mode="STACK"} == 1
+        for: 2m
+        labels:
+          severity: critical
+          component: daemon
+        annotations:
+          summary: "Emergency STACK mode cleanup activated"
+          description: "Critical disk usage triggered aggressive cleanup. Monitor closely."
+
+      - alert: ExcessiveFileDeletion
+        expr: rate(storagesage_files_deleted_total[5m]) > 100
+        for: 10m
+        labels:
+          severity: info
+          component: daemon
+        annotations:
+          summary: "High file deletion rate"
+          description: "Deleting {{ $value | humanize }} files/sec. Normal for large cleanups."
+
+  # ============================================================================
+  # DAEMON HEALTH ALERTS
+  # ============================================================================
+  - name: storagesage_daemon_health
+    interval: 30s
+    rules:
+      - alert: DaemonDown
+        expr: up{job="storagesage-daemon"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: daemon
+        annotations:
+          summary: "StorageSage daemon is down"
+          description: "Daemon unreachable. Check container/service status."
+
+      - alert: DaemonUnhealthy
+        expr: storagesage_daemon_healthy{component="overall"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: daemon
+        annotations:
+          summary: "Daemon health check failing"
+          description: "Daemon reports unhealthy status. Check component health metrics."
+
+      - alert: ComponentUnhealthy
+        expr: storagesage_component_healthy == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: daemon
+        annotations:
+          summary: "Component {{ $labels.component }} is unhealthy"
+          description: "Health check failures: {{ $value }}. Investigate component issues."
+
+      - alert: FrequentRestarts
+        expr: rate(storagesage_daemon_restarts_total[15m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          component: daemon
+        annotations:
+          summary: "Daemon restarting frequently"
+          description: "Restart rate: {{ $value | humanize }}/sec. Check for crashes or config issues."
+
+      - alert: HighCPUUsage
+        expr: rate(process_cpu_seconds_total{job="storagesage-daemon"}[5m]) * 100 > 50
+        for: 10m
+        labels:
+          severity: warning
+          component: daemon
+        annotations:
+          summary: "Daemon CPU usage exceeds 50%"
+          description: "CPU: {{ $value | humanize }}%. May indicate performance issues."
+
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes{job="storagesage-daemon"} > 1073741824
+        for: 10m
+        labels:
+          severity: warning
+          component: daemon
+        annotations:
+          summary: "Daemon memory usage exceeds 1GB"
+          description: "Memory: {{ $value | humanizeBytes }}. Check for memory leaks."
+
+  # ============================================================================
+  # BACKEND API ALERTS
+  # ============================================================================
+  - name: storagesage_backend
+    interval: 30s
+    rules:
+      - alert: BackendDown
+        expr: up{job="storagesage-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: backend
+        annotations:
+          summary: "StorageSage backend API is down"
+          description: "Backend unreachable. Web UI and API unavailable."
+
+      - alert: HighAPIErrorRate
+        expr: rate(http_requests_total{job="storagesage-backend",status=~"5.."}[5m]) / rate(http_requests_total{job="storagesage-backend"}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: backend
+        annotations:
+          summary: "Backend API error rate exceeds 5%"
+          description: "Error rate: {{ $value | humanizePercentage }}. Check backend logs."
+
+      - alert: SlowAPIResponses
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="storagesage-backend"}[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          component: backend
+        annotations:
+          summary: "Backend API p95 latency exceeds 2s"
+          description: "p95 latency: {{ $value | humanizeDuration }}. Performance degradation detected."
+
+  # ============================================================================
+  # SYSTEM RESOURCE ALERTS
+  # ============================================================================
+  - name: system_resources
+    interval: 30s
+    rules:
+      - alert: HighSystemCPU
+        expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 10m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "System CPU usage exceeds 80%"
+          description: "CPU: {{ $value | humanize }}% on {{ $labels.instance }}."
+
+      - alert: HighSystemMemory
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 90
+        for: 10m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "System memory usage exceeds 90%"
+          description: "Memory: {{ $value | humanize }}% on {{ $labels.instance }}."
+
+      - alert: DiskIOSaturation
+        expr: rate(node_disk_io_time_seconds_total[5m]) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "Disk I/O saturation detected"
+          description: "Disk I/O util: {{ $value | humanizePercentage }} on {{ $labels.instance }}."
+
+  # ============================================================================
+  # OBSERVABILITY STACK HEALTH
+  # ============================================================================
+  - name: observability_stack
+    interval: 30s
+    rules:
+      - alert: PrometheusDown
+        expr: up{job="prometheus"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: observability
+        annotations:
+          summary: "Prometheus is down"
+          description: "Metrics collection stopped. Alerting may be impaired."
+
+      - alert: LokiDown
+        expr: up{job="loki"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          component: observability
+        annotations:
+          summary: "Loki is down"
+          description: "Log aggregation stopped. Logs may be lost."
+
+      - alert: PromtailDown
+        expr: up{job="promtail"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          component: observability
+        annotations:
+          summary: "Promtail is down"
+          description: "Log shipping stopped. Logs not being forwarded to Loki."
+
+      - alert: GrafanaDown
+        expr: up{job="grafana"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          component: observability
+        annotations:
+          summary: "Grafana is down"
+          description: "Dashboards unavailable. Metrics/logs still being collected."
+
+      - alert: PrometheusTargetDown
+        expr: up == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: observability
+        annotations:
+          summary: "Prometheus target {{ $labels.job }} is down"
+          description: "Target {{ $labels.instance }} unreachable for 5 minutes."

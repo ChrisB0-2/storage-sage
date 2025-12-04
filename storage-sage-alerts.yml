@@ -1,0 +1,76 @@
+groups:
+  - name: storage-sage-alerts
+    interval: 1m
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum(count_over_time({job="storage-sage", action="ERROR"}[5m])) > 10
+        for: 2m
+        labels:
+          severity: warning
+          component: cleanup
+        annotations:
+          summary: "High error rate detected in StorageSage cleanup"
+          description: "{{ $value }} errors detected in the last 5 minutes. Check logs for details."
+          runbook_url: "https://github.com/your-org/storage-sage/docs/alert-runbooks.md#high-error-rate"
+          query: 'sum(count_over_time({job="storage-sage", action="ERROR"}[5m]))'
+
+      - alert: StackedCleanupTriggered
+        expr: |
+          sum(count_over_time({job="storage-sage", primary_reason="stacked_cleanup"}[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: cleanup
+        annotations:
+          summary: "Stacked cleanup triggered - Critical disk condition"
+          description: "Stacked cleanup mode activated. Disk usage exceeded 98% threshold. Immediate action required."
+          runbook_url: "https://github.com/your-org/storage-sage/docs/alert-runbooks.md#stacked-cleanup"
+          query: 'sum(count_over_time({job="storage-sage", primary_reason="stacked_cleanup"}[5m]))'
+
+      - alert: NoDeletionsForOneHour
+        expr: |
+          sum(count_over_time({job="storage-sage", action="DELETE"}[1h])) == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: cleanup
+        annotations:
+          summary: "No deletions detected in the last hour"
+          description: "StorageSage daemon may be stopped or not processing files. Check daemon health."
+          runbook_url: "https://github.com/your-org/storage-sage/docs/alert-runbooks.md#no-deletions"
+          query: 'sum(count_over_time({job="storage-sage", action="DELETE"}[1h]))'
+
+      - alert: ExcessiveSkipRate
+        expr: |
+          (
+            sum(count_over_time({job="storage-sage", action="SKIP"}[10m])) 
+            / 
+            sum(count_over_time({job="storage-sage"}[10m]))
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          component: cleanup
+        annotations:
+          summary: "Excessive skip rate detected"
+          description: "More than 50% of operations are being skipped. Possible NFS issues or permission problems."
+          runbook_url: "https://github.com/your-org/storage-sage/docs/alert-runbooks.md#excessive-skip-rate"
+          query: |
+            (sum(count_over_time({job="storage-sage", action="SKIP"}[10m])) 
+             / 
+             sum(count_over_time({job="storage-sage"}[10m])))
+
+      - alert: DeletionRateSpike
+        expr: |
+          sum(rate({job="storage-sage", action="DELETE"}[5m])) * 60 > 100
+        for: 2m
+        labels:
+          severity: warning
+          component: cleanup
+        annotations:
+          summary: "Deletion rate spike detected"
+          description: "Deletion rate exceeded 100 deletions/minute. Possible misconfiguration or emergency cleanup."
+          runbook_url: "https://github.com/your-org/storage-sage/docs/alert-runbooks.md#deletion-rate-spike"
+          query: 'sum(rate({job="storage-sage", action="DELETE"}[5m])) * 60'
+

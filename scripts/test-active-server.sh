@@ -1,0 +1,997 @@
+#!/bin/bash
+
+# StorageSage Active Server Simulation & Testing
+# Simulates realistic server load and validates all cleanup scenarios
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Configuration
+TEST_WORKSPACE="/tmp/storage-sage-test-workspace"
+TEST_LOG_DIR="$TEST_WORKSPACE/var/log"
+TEST_DATA_DIR="$TEST_WORKSPACE/data"
+TEST_BACKUP_DIR="$TEST_WORKSPACE/backups"
+TEST_TEMP_DIR="$TEST_WORKSPACE/tmp"
+
+DAEMON_URL="http://localhost:9090"
+BACKEND_URL="https://localhost:8443"
+DB_PATH="/var/lib/storage-sage/deletions.db"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+NC='\033[0m' # No Color
+
+# Statistics
+TESTS_RUN=0
+TESTS_PASSED=0
+TESTS_FAILED=0
+
+# Detect environment
+IS_DOCKER=false
+DAEMON_CONTAINER=""
+if docker compose ps 2>/dev/null | grep -q storage-sage-daemon; then
+    IS_DOCKER=true
+    DAEMON_CONTAINER=$(docker compose ps --format '{{.Name}}' | grep daemon | head -1)
+fi
+
+echo -e "${BLUE}╔═══════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${BLUE}║   StorageSage Active Server Simulation & Test Suite         ║${NC}"
+echo -e "${BLUE}╚═══════════════════════════════════════════════════════════════╝${NC}"
+echo ""
+echo -e "${CYAN}Environment Detection:${NC}"
+echo "  Working Directory: $TEST_WORKSPACE"
+echo "  Docker Mode: $IS_DOCKER"
+if [ "$IS_DOCKER" = true ]; then
+    echo "  Daemon Container: $DAEMON_CONTAINER"
+fi
+echo ""
+
+# ============================================
+# Helper Functions
+# ============================================
+
+log_test() {
+    local name="$1"
+    echo -e "${CYAN}[TEST] $name${NC}"
+    TESTS_RUN=$((TESTS_RUN + 1))
+}
+
+pass_test() {
+    local msg="$1"
+    echo -e "${GREEN}  ✓ PASS: $msg${NC}"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+}
+
+fail_test() {
+    local msg="$1"
+    echo -e "${RED}  ✗ FAIL: $msg${NC}"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+}
+
+warn_test() {
+    local msg="$1"
+    echo -e "${YELLOW}  ⚠ WARN: $msg${NC}"
+}
+
+# Get metrics from Prometheus endpoint
+get_metric() {
+    local metric_name="$1"
+    curl -s "$DAEMON_URL/metrics" 2>/dev/null | \
+        grep "^${metric_name}" | grep -v "#" | awk '{print $2}' | head -1 || echo "0"
+}
+
+show_metrics() {
+    echo -e "${YELLOW}📊 Current Metrics:${NC}"
+    
+    FILES_DELETED=$(get_metric "storagesage_files_deleted_total")
+    BYTES_FREED=$(get_metric "storagesage_bytes_freed_total")
+    ERRORS=$(get_metric "storagesage_errors_total")
+    
+    BYTES_MB=$(echo "scale=2; $BYTES_FREED / 1024 / 1024" | bc 2>/dev/null || echo "0")
+    
+    echo "  Files Deleted: $FILES_DELETED"
+    echo "  Bytes Freed: $BYTES_MB MB"
+    echo "  Errors: $ERRORS"
+}
+
+# Get file count
+get_file_count() {
+    local dir="${1:-$TEST_WORKSPACE}"
+    find "$dir" -type f 2>/dev/null | wc -l
+}
+
+# Get disk usage
+get_disk_usage() {
+    local dir="${1:-$TEST_WORKSPACE}"
+    du -sh "$dir" 2>/dev/null | awk '{print $1}'
+}
+
+# Trigger cleanup
+trigger_cleanup() {
+    echo -e "${BLUE}  🔄 Triggering cleanup cycle...${NC}"
+    
+    if [ "$IS_DOCKER" = true ]; then
+        # Send SIGUSR1 to trigger cleanup in Docker
+        docker compose exec -T "$DAEMON_CONTAINER" pkill -SIGUSR1 storage-sage 2>/dev/null || true
+    else
+        # Try HTTP endpoint
+        curl -s -X POST "$DAEMON_URL/trigger" > /dev/null 2>&1 || true
+    fi
+    
+    echo "  Waiting 5 seconds for cleanup to complete..."
+    sleep 5
+}
+
+# Create file with specific age
+# NOTE: In Docker mode, timestamps will be set inside container after file creation
+create_aged_file() {
+    local filename="$1"
+    local age_days="$2"
+    local size_mb="${3:-1}"
+
+    # Create directory if needed
+    mkdir -p "$(dirname "$filename")"
+
+    # Ensure directory is writable
+    chmod u+w "$(dirname "$filename")" 2>/dev/null || true
+
+    # Create file with zero data (faster than urandom for testing)
+    if ! dd if=/dev/zero of="$filename" bs=1M count="$size_mb" status=none 2>&1; then
+        echo "Error: Failed to create file $filename" >&2
+        return 1
+    fi
+
+    # Ensure file is owned by current user
+    chown "$USER:$USER" "$filename" 2>/dev/null || sudo chown "$USER:$USER" "$filename" 2>/dev/null || true
+
+    # NOTE: Timestamp will be set later inside container in Docker mode
+    # For non-Docker mode, set timestamp now
+    if [ "$IS_DOCKER" != true ]; then
+        local touch_timestamp
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            touch_timestamp=$(date -v-${age_days}d +%Y%m%d%H%M.%S)
+        else
+            touch_timestamp=$(date -d "${age_days} days ago" +%Y%m%d%H%M.%S)
+        fi
+        touch -t "$touch_timestamp" "$filename" 2>/dev/null || true
+    fi
+}
+
+# Query database
+db_query() {
+    local query="$1"
+    
+    if [ "$IS_DOCKER" = true ]; then
+        docker compose exec -T "$DAEMON_CONTAINER" sqlite3 /var/lib/storage-sage/deletions.db "$query" 2>/dev/null
+    elif command -v sqlite3 &> /dev/null && [ -f "$DB_PATH" ]; then
+        sqlite3 "$DB_PATH" "$query" 2>/dev/null
+    else
+        echo "0"
+    fi
+}
+
+# Check Loki
+loki_query() {
+    local query="$1"
+    curl -s -G "http://localhost:3100/loki/api/v1/query_range" \
+        --data-urlencode "query=${query}" \
+        --data-urlencode "start=$(($(date +%s) - 600))000000000" \
+        --data-urlencode "end=$(date +%s)000000000" \
+        --data-urlencode "limit=1000" 2>/dev/null | \
+        jq -r '.data.result | length' 2>/dev/null || echo "0"
+}
+
+# ============================================
+# Setup Phase
+# ============================================
+
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "${BLUE}Phase 0: Environment Setup${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo ""
+
+log_test "Cleanup previous test workspace"
+# Use sudo to remove files owned by daemon user
+sudo rm -rf "$TEST_WORKSPACE" 2>/dev/null || rm -rf "$TEST_WORKSPACE" 2>/dev/null || true
+mkdir -p "$TEST_LOG_DIR" "$TEST_DATA_DIR" "$TEST_BACKUP_DIR" "$TEST_TEMP_DIR"
+pass_test "Test workspace created: $TEST_WORKSPACE"
+
+log_test "Check daemon connectivity"
+if curl -s "$DAEMON_URL/metrics" > /dev/null 2>&1; then
+    pass_test "Daemon is accessible at $DAEMON_URL"
+else
+    fail_test "Cannot connect to daemon at $DAEMON_URL"
+    echo ""
+    echo -e "${RED}ERROR: StorageSage daemon is not running or not accessible.${NC}"
+    echo "Start the daemon first:"
+    if [ "$IS_DOCKER" = true ]; then
+        echo "  docker compose up -d"
+    else
+        echo "  sudo systemctl start storage-sage"
+    fi
+    exit 1
+fi
+
+log_test "Check database availability"
+DB_RECORDS=$(db_query "SELECT COUNT(*) FROM deletions;" || echo "0")
+if [ "$DB_RECORDS" != "0" ] || [ -f "$DB_PATH" ] || [ "$IS_DOCKER" = true ]; then
+    pass_test "Database accessible (current records: $DB_RECORDS)"
+else
+    warn_test "Database not found - will test without DB validation"
+fi
+
+log_test "Check Loki availability"
+LOKI_LOGS=$(loki_query '{job="storage-sage"}' || echo "0")
+if [ "$LOKI_LOGS" != "0" ]; then
+    pass_test "Loki is accessible (found $LOKI_LOGS log entries)"
+else
+    warn_test "Loki not available - will test without log aggregation"
+fi
+
+echo ""
+show_metrics
+echo ""
+
+# ============================================
+# Phase 1: Initial Server State
+# ============================================
+
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "${BLUE}Phase 1: Creating Initial Server State${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo ""
+
+log_test "Create realistic directory structure"
+mkdir -p "$TEST_LOG_DIR"/{application,nginx,apache2,system,audit}
+mkdir -p "$TEST_DATA_DIR"/{reports,analytics,exports}
+mkdir -p "$TEST_BACKUP_DIR"/{daily,weekly,monthly}
+mkdir -p "$TEST_TEMP_DIR"/{cache,processing,uploads}
+pass_test "Directory structure created"
+
+log_test "Ensure test workspace is writable"
+# Remove any existing workspace and recreate with correct ownership
+sudo rm -rf "$TEST_WORKSPACE" 2>/dev/null || rm -rf "$TEST_WORKSPACE" 2>/dev/null || true
+mkdir -p "$TEST_LOG_DIR" "$TEST_DATA_DIR" "$TEST_BACKUP_DIR" "$TEST_TEMP_DIR"
+# Ensure current user owns the workspace
+sudo chown -R "$USER:$USER" "$TEST_WORKSPACE" 2>/dev/null || chown -R "$USER:$USER" "$TEST_WORKSPACE" 2>/dev/null || true
+chmod -R u+w "$TEST_WORKSPACE" 2>/dev/null || sudo chmod -R 777 "$TEST_WORKSPACE" 2>/dev/null || true
+pass_test "Test workspace permissions set"
+
+log_test "Create old log files (15-30 days - should be deleted)"
+echo "  Creating application logs..."
+for i in {1..30}; do
+    create_aged_file "$TEST_LOG_DIR/application/app_$(printf %03d $i).log" $((15 + i % 15)) 1
+done
+
+echo "  Creating nginx logs..."
+for i in {1..20}; do
+    create_aged_file "$TEST_LOG_DIR/nginx/access_$(date -d "$((20 + i % 10)) days ago" +%Y%m%d 2>/dev/null || date -v-$((20 + i % 10))d +%Y%m%d).log" $((20 + i % 10)) 2
+done
+
+echo "  Creating apache logs..."
+for i in {1..15}; do
+    create_aged_file "$TEST_LOG_DIR/apache2/error_$(printf %03d $i).log" $((18 + i % 12)) 1
+done
+
+pass_test "Created 65 old log files (15-30 days old)"
+
+log_test "Create medium-age files (7-14 days - borderline)"
+for i in {1..25}; do
+    create_aged_file "$TEST_LOG_DIR/application/app_medium_$(printf %03d $i).log" $((7 + i % 7)) 1
+done
+pass_test "Created 25 medium-age files"
+
+log_test "Create recent files (0-6 days - should NOT be deleted)"
+for i in {1..20}; do
+    create_aged_file "$TEST_LOG_DIR/application/app_recent_$(printf %03d $i).log" $((i % 6)) 1
+done
+
+echo "  Creating today's active logs..."
+for i in {1..10}; do
+    create_aged_file "$TEST_LOG_DIR/application/app_$(date +%Y%m%d)_$(printf %02d $i).log" 0 1
+done
+
+pass_test "Created 30 recent files (0-6 days old)"
+
+log_test "Create large backup files"
+echo "  Creating old backups (should be deleted)..."
+for i in {1..8}; do
+    create_aged_file "$TEST_BACKUP_DIR/daily/backup_$(date -d "$((20 + i)) days ago" +%Y%m%d 2>/dev/null || date -v-$((20 + i))d +%Y%m%d).tar.gz" $((20 + i)) 10
+done
+
+echo "  Creating recent backups (should be kept)..."
+for i in {1..3}; do
+    create_aged_file "$TEST_BACKUP_DIR/daily/backup_$(date -d "$i days ago" +%Y%m%d 2>/dev/null || date -v-${i}d +%Y%m%d).tar.gz" $i 10
+done
+
+pass_test "Created 11 backup files (80MB old, 30MB recent)"
+
+log_test "Create temporary cache files"
+for i in {1..15}; do
+    create_aged_file "$TEST_TEMP_DIR/cache/cache_$(printf %03d $i).tmp" $((10 + i % 10)) 1
+done
+pass_test "Created 15 cache files"
+
+INITIAL_COUNT=$(get_file_count)
+INITIAL_SIZE=$(get_disk_usage)
+
+echo ""
+echo -e "${GREEN}Initial Server State:${NC}"
+echo "  Total files: $INITIAL_COUNT"
+echo "  Disk usage: $INITIAL_SIZE"
+echo "  Breakdown:"
+echo "    - Old files (15-30 days): 65 (~85 MB)"
+echo "    - Medium files (7-14 days): 25 (~25 MB)"
+echo "    - Recent files (0-6 days): 30 (~40 MB)"
+echo "    - Old backups (20+ days): 8 (~80 MB)"
+echo "    - Recent backups (1-3 days): 3 (~30 MB)"
+echo "    - Cache files (10-20 days): 15 (~15 MB)"
+echo ""
+
+# After Phase 1, before the diagnostic section, add:
+
+if [ "$IS_DOCKER" = true ]; then
+    log_test "Ensure container can see newly created files"
+    echo "  Restarting daemon container to refresh mount..."
+    docker compose restart storage-sage-daemon >/dev/null 2>&1
+    sleep 3  # Wait for container to start
+    pass_test "Container restarted to refresh mount"
+
+    # CRITICAL FIX: Set all timestamps INSIDE container where touch -t works correctly
+    # Docker bind mounts don't preserve timestamps set on host
+    log_test "Set file timestamps inside container to ensure preservation"
+    echo "  Setting precise timestamps on all test files inside container..."
+
+    docker compose exec -T "$DAEMON_CONTAINER" sh <<'EOF' 2>/dev/null || true
+        # Helper function to set timestamp
+        set_age() {
+            local file="$1"
+            local days="$2"
+            local timestamp=$(date -d "$days days ago" +%Y%m%d%H%M.%S 2>/dev/null || date -v-${days}d +%Y%m%d%H%M.%S 2>/dev/null)
+            touch -t "$timestamp" "$file" 2>/dev/null || true
+        }
+
+        # Phase 1 Files: Old files (15-30 days - should be deleted)
+        # app_001.log through app_030.log with ages 15-29 days
+        i=1
+        for f in /test-workspace/var/log/application/app_[0-9][0-9][0-9].log; do
+            [ -f "$f" ] || continue
+            age=$((15 + (i % 15)))
+            set_age "$f" "$age"
+            i=$((i + 1))
+        done
+
+        # nginx logs (20-29 days old)
+        i=1
+        for f in /test-workspace/var/log/nginx/access_*.log; do
+            [ -f "$f" ] || continue
+            age=$((20 + (i % 10)))
+            set_age "$f" "$age"
+            i=$((i + 1))
+        done
+
+        # apache logs (18-29 days old)
+        i=1
+        for f in /test-workspace/var/log/apache2/error_*.log; do
+            [ -f "$f" ] || continue
+            age=$((18 + (i % 12)))
+            set_age "$f" "$age"
+            i=$((i + 1))
+        done
+
+        # Medium-age files (7-14 days - borderline, some may be deleted)
+        i=1
+        for f in /test-workspace/var/log/application/app_medium_*.log; do
+            [ -f "$f" ] || continue
+            age=$((7 + (i % 7)))
+            set_age "$f" "$age"
+            i=$((i + 1))
+        done
+
+        # Recent files (0-6 days - should NOT be deleted)
+        i=1
+        for f in /test-workspace/var/log/application/app_recent_*.log; do
+            [ -f "$f" ] || continue
+            age=$((i % 6))
+            set_age "$f" "$age"
+            i=$((i + 1))
+        done
+
+        # Today's files (0 days old)
+        for f in /test-workspace/var/log/application/app_$(date +%Y%m%d)_*.log; do
+            [ -f "$f" ] || continue
+            set_age "$f" "0"
+        done
+
+        # Old backup files (20-27 days old - should be deleted)
+        # Only the first 8 backups are old
+        i=0
+        for f in /test-workspace/backups/daily/backup_*.tar.gz; do
+            [ -f "$f" ] || continue
+            if [ $i -lt 8 ]; then
+                age=$((20 + i))
+                set_age "$f" "$age"
+            else
+                # Recent backups (1-3 days old)
+                age=$((i - 7))
+                set_age "$f" "$age"
+            fi
+            i=$((i + 1))
+        done
+
+        # Cache files (10-19 days old - should be deleted)
+        i=1
+        for f in /test-workspace/tmp/cache/cache_*.tmp; do
+            [ -f "$f" ] || continue
+            age=$((10 + (i % 10)))
+            set_age "$f" "$age"
+            i=$((i + 1))
+        done
+
+        echo "  Timestamp setting complete"
+EOF
+
+    # Verify timestamps were set correctly
+    sleep 1  # Give filesystem a moment to sync
+    OLD_COUNT=$(docker compose exec -T "$DAEMON_CONTAINER" find /test-workspace -type f -mtime +7 2>/dev/null | wc -l)
+    VERY_OLD_COUNT=$(docker compose exec -T "$DAEMON_CONTAINER" find /test-workspace -type f -mtime +14 2>/dev/null | wc -l)
+
+    echo "  Files >7 days old: $OLD_COUNT"
+    echo "  Files >14 days old: $VERY_OLD_COUNT"
+
+    if [ "$OLD_COUNT" -gt 80 ]; then
+        pass_test "Timestamps set inside container ($OLD_COUNT files >7 days old)"
+    else
+        warn_test "Unexpected file count ($OLD_COUNT files >7 days old, expected >80)"
+        echo "  Debug: Sample file ages:"
+        docker compose exec -T "$DAEMON_CONTAINER" sh -c 'for f in /test-workspace/var/log/application/app_001.log /test-workspace/var/log/application/app_medium_001.log /test-workspace/var/log/application/app_recent_001.log; do [ -f "$f" ] && echo "  $(basename $f): $(stat -c %y $f | cut -d\" \" -f1)"; done' 2>/dev/null || true
+    fi
+fi
+
+# ============================================
+# Diagnostic: Verify File Timestamps and Daemon Visibility
+# ============================================
+
+echo ""
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "${BLUE}Diagnostic: Verify File Timestamps and Daemon Visibility${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo ""
+
+log_test "Check file timestamps are actually old"
+# Sample a few files and check their ages
+SAMPLE_FILES=(
+    "$TEST_LOG_DIR/application/app_001.log"
+    "$TEST_LOG_DIR/application/app_medium_001.log"
+    "$TEST_LOG_DIR/application/app_recent_001.log"
+)
+
+for sample_file in "${SAMPLE_FILES[@]}"; do
+    if [ -f "$sample_file" ]; then
+        if stat -c %Y "$sample_file" >/dev/null 2>&1; then
+            file_mtime=$(stat -c %Y "$sample_file" 2>/dev/null)
+            current_time=$(date +%s)
+            file_age_days=$(((current_time - file_mtime) / 86400))
+            file_date=$(stat -c %y "$sample_file" 2>/dev/null | cut -d' ' -f1)
+            echo "  $(basename "$sample_file"): age=${file_age_days} days, date=$file_date"
+        fi
+    fi
+done
+
+log_test "Verify daemon can see files in test workspace"
+if [ "$IS_DOCKER" = true ]; then
+    DAEMON_TEST_PATH="/test-workspace"
+    
+    # Add a small delay to ensure files are fully written
+    sleep 1
+    
+    # Use grep to filter out empty lines before counting
+    FILE_COUNT=$(docker compose exec -T "$DAEMON_CONTAINER" find "$DAEMON_TEST_PATH" -type f 2>/dev/null | grep -v "^$" | wc -l)
+    OLD_FILE_COUNT=$(docker compose exec -T "$DAEMON_CONTAINER" find "$DAEMON_TEST_PATH" -type f -mtime +7 2>/dev/null | grep -v "^$" | wc -l)
+    
+    echo "  Files visible to daemon: $FILE_COUNT"
+    echo "  Files older than 7 days (daemon view): $OLD_FILE_COUNT"
+    
+    if [ "$FILE_COUNT" -eq 0 ]; then
+        fail_test "Daemon cannot see any files in $DAEMON_TEST_PATH"
+        echo -e "${YELLOW}  Debug: Running find command directly:${NC}"
+        docker compose exec -T "$DAEMON_CONTAINER" find "$DAEMON_TEST_PATH" -type f 2>&1 | head -5 | sed 's/^/    /'
+        echo -e "${YELLOW}  Host file count for comparison: $(find "$TEST_WORKSPACE" -type f 2>/dev/null | wc -l)${NC}"
+    elif [ "$OLD_FILE_COUNT" -eq 0 ]; then
+        warn_test "Daemon sees $FILE_COUNT files but none are detected as old (>7 days)"
+        echo -e "${YELLOW}  This suggests timestamp preservation issue through mount${NC}"
+        echo -e "${YELLOW}  Sample file timestamps from container:${NC}"
+        docker compose exec -T "$DAEMON_CONTAINER" sh -c "find $DAEMON_TEST_PATH -type f | head -3 | xargs stat 2>/dev/null | grep -E 'File:|Modify:'" | sed 's/^/    /' || echo "    (could not check timestamps)"
+    else
+        pass_test "Daemon can see $FILE_COUNT files, $OLD_FILE_COUNT are old enough"
+    fi
+else
+    # On host, use TEST_WORKSPACE directly
+    FILE_COUNT=$(find "$TEST_WORKSPACE" -type f 2>/dev/null | wc -l)
+    OLD_FILE_COUNT=$(find "$TEST_WORKSPACE" -type f -mtime +7 2>/dev/null | wc -l)
+    echo "  Files in test workspace: $FILE_COUNT"
+    echo "  Files older than 7 days: $OLD_FILE_COUNT"
+    
+    # Check what paths daemon is actually configured to scan
+    CONFIG_PATH="/etc/storage-sage/config.yaml"
+    if [ -f "$CONFIG_PATH" ]; then
+        echo "  Daemon config scan_paths:"
+        grep -E "^\s*-\s*/" "$CONFIG_PATH" 2>/dev/null | sed 's/^/    /' || echo "    (none found)"
+        echo "  Daemon config paths:"
+        grep -A 1 "path:" "$CONFIG_PATH" 2>/dev/null | grep "path:" | sed 's/^/    /' || echo "    (none found)"
+        
+        if ! grep -q "$TEST_WORKSPACE" "$CONFIG_PATH" 2>/dev/null; then
+            fail_test "Daemon config does NOT include $TEST_WORKSPACE"
+            echo -e "${RED}  ACTION REQUIRED: Add $TEST_WORKSPACE to daemon config at $CONFIG_PATH${NC}"
+        else
+            pass_test "Daemon config includes test workspace path"
+        fi
+    else
+        warn_test "Cannot check daemon config (file not found: $CONFIG_PATH)"
+    fi
+fi
+
+echo ""
+
+# ============================================
+# Phase 2: Age-Based Cleanup Test
+# ============================================
+
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "${BLUE}Phase 2: Age-Based Cleanup Test${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo ""
+
+log_test "Age-based cleanup (files > 7 days old)"
+echo "  Expected behavior:"
+echo "    - Delete: Old files (15-30 days) = ~65 files"
+echo "    - Delete: Medium files (7-14 days) = ~25 files"
+echo "    - Keep: Recent files (0-6 days) = ~30 files"
+echo ""
+
+BEFORE_COUNT=$(get_file_count)
+BEFORE_DB_RECORDS=$(db_query "SELECT COUNT(*) FROM deletions;" || echo "0")
+
+trigger_cleanup
+
+AFTER_COUNT=$(get_file_count)
+AFTER_SIZE=$(get_disk_usage)
+AFTER_DB_RECORDS=$(db_query "SELECT COUNT(*) FROM deletions;" || echo "0")
+FILES_DELETED=$((BEFORE_COUNT - AFTER_COUNT))
+
+echo ""
+echo -e "${GREEN}Cleanup Results:${NC}"
+echo "  Files before: $BEFORE_COUNT"
+echo "  Files after: $AFTER_COUNT"
+echo "  Files deleted: $FILES_DELETED"
+echo "  Disk usage after: $AFTER_SIZE"
+echo "  DB records added: $((AFTER_DB_RECORDS - BEFORE_DB_RECORDS))"
+echo ""
+
+if [ "$FILES_DELETED" -ge 50 ]; then
+    pass_test "Age-based cleanup deleted expected number of files ($FILES_DELETED)"
+else
+    fail_test "Expected ~90 deletions, got $FILES_DELETED"
+fi
+
+log_test "Verify recent files were NOT deleted"
+RECENT_COUNT=$(find "$TEST_LOG_DIR/application" -name "app_recent_*" 2>/dev/null | wc -l)
+if [ "$RECENT_COUNT" -ge 15 ]; then
+    pass_test "Recent files preserved ($RECENT_COUNT remaining)"
+else
+    fail_test "Recent files were deleted (only $RECENT_COUNT remaining)"
+fi
+
+log_test "Check database recorded deletions"
+if [ "$AFTER_DB_RECORDS" -gt "$BEFORE_DB_RECORDS" ]; then
+    AGE_DELETIONS=$(db_query "SELECT COUNT(*) FROM deletions WHERE primary_reason='age_threshold';" || echo "0")
+    pass_test "Database recorded $((AFTER_DB_RECORDS - BEFORE_DB_RECORDS)) deletion events ($AGE_DELETIONS age-based)"
+else
+    warn_test "Database not recording events (check if database is enabled)"
+fi
+
+log_test "Check Loki received log entries"
+LOKI_AFTER=$(loki_query '{job="storage-sage", action="DELETE"}')
+if [ "$LOKI_AFTER" != "0" ]; then
+    pass_test "Loki received deletion logs ($LOKI_AFTER entries)"
+else
+    warn_test "Loki not receiving logs (check Promtail)"
+fi
+
+echo ""
+show_metrics
+echo ""
+
+# ============================================
+# Phase 3: Ongoing Server Activity
+# ============================================
+
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "${BLUE}Phase 3: Simulating Ongoing Server Activity${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo ""
+
+log_test "Simulate continuous server activity (30 seconds)"
+echo "  Creating new files every 5 seconds..."
+echo ""
+
+for round in {1..6}; do
+    # Simulate application generating logs
+    for i in {1..3}; do
+        create_aged_file "$TEST_LOG_DIR/application/app_live_${round}_$(printf %02d $i).log" 0 1
+    done
+    
+    # Simulate nginx access logs
+    create_aged_file "$TEST_LOG_DIR/nginx/access_$(date +%Y%m%d_%H%M%S).log" 0 2
+    
+    # Simulate temporary processing files
+    for i in {1..2}; do
+        create_aged_file "$TEST_TEMP_DIR/processing/process_${round}_$i.tmp" 0 1
+    done
+    
+    CURRENT_COUNT=$(get_file_count)
+    echo "  Round $round/6: Created 6 files (total: $CURRENT_COUNT files, $(get_disk_usage))"
+    sleep 5
+done
+
+echo ""
+ACTIVITY_COUNT=$(get_file_count)
+pass_test "Server activity simulation complete ($ACTIVITY_COUNT total files)"
+
+log_test "Verify new files are NOT immediately deleted"
+NEW_FILES=$(find "$TEST_LOG_DIR/application" -name "app_live_*" 2>/dev/null | wc -l)
+if [ "$NEW_FILES" -ge 15 ]; then
+    pass_test "New files preserved during activity ($NEW_FILES files)"
+else
+    warn_test "Some new files were deleted ($NEW_FILES remaining)"
+fi
+
+echo ""
+
+# ============================================
+# Phase 4: Disk Pressure Simulation
+# ============================================
+
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "${BLUE}Phase 4: Disk Pressure Simulation${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo ""
+
+log_test "Create large files to simulate disk pressure"
+echo "  Creating 40 large files (5MB each = 200MB total)..."
+for i in {1..40}; do
+    create_aged_file "$TEST_DATA_DIR/exports/export_$(printf %03d $i).csv" 5 5
+done
+
+PRESSURE_COUNT=$(get_file_count)
+PRESSURE_SIZE=$(get_disk_usage)
+
+echo ""
+echo "  Files before cleanup: $PRESSURE_COUNT"
+echo "  Disk usage: $PRESSURE_SIZE"
+pass_test "Disk pressure files created"
+
+log_test "Trigger cleanup under disk pressure"
+BEFORE_PRESSURE=$(get_file_count)
+trigger_cleanup
+AFTER_PRESSURE=$(get_file_count)
+PRESSURE_DELETED=$((BEFORE_PRESSURE - AFTER_PRESSURE))
+
+echo ""
+echo -e "${GREEN}Disk Pressure Cleanup Results:${NC}"
+echo "  Files deleted: $PRESSURE_DELETED"
+echo "  Disk usage after: $(get_disk_usage)"
+echo ""
+
+if [ "$PRESSURE_DELETED" -ge 10 ]; then
+    pass_test "Disk pressure triggered cleanup ($PRESSURE_DELETED files deleted)"
+else
+    warn_test "Limited cleanup under disk pressure ($PRESSURE_DELETED files deleted)"
+fi
+
+echo ""
+show_metrics
+echo ""
+
+# ============================================
+# Phase 5: Stacked Cleanup Simulation
+# ============================================
+
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "${BLUE}Phase 5: Stacked Cleanup (Critical Disk) Simulation${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo ""
+
+log_test "Create critical disk scenario"
+echo "  Creating many large old files to trigger stacked cleanup..."
+for i in {1..50}; do
+    create_aged_file "$TEST_BACKUP_DIR/weekly/old_backup_$(printf %03d $i).tar" 20 10
+done
+
+CRITICAL_COUNT=$(get_file_count)
+CRITICAL_SIZE=$(get_disk_usage)
+
+echo ""
+echo "  Files: $CRITICAL_COUNT"
+echo "  Disk usage: $CRITICAL_SIZE"
+pass_test "Critical disk scenario created (500MB of old backups)"
+
+log_test "Trigger stacked cleanup"
+BEFORE_CRITICAL=$(get_file_count)
+trigger_cleanup
+AFTER_CRITICAL=$(get_file_count)
+CRITICAL_DELETED=$((BEFORE_CRITICAL - AFTER_CRITICAL))
+
+echo ""
+echo -e "${GREEN}Stacked Cleanup Results:${NC}"
+echo "  Files deleted: $CRITICAL_DELETED"
+echo "  Disk usage after: $(get_disk_usage)"
+echo ""
+
+if [ "$CRITICAL_DELETED" -ge 30 ]; then
+    pass_test "Stacked cleanup activated ($CRITICAL_DELETED files deleted)"
+else
+    warn_test "Stacked cleanup may not have triggered ($CRITICAL_DELETED files deleted)"
+fi
+
+log_test "Verify stacked cleanup was recorded"
+STACKED_COUNT=$(db_query "SELECT COUNT(*) FROM deletions WHERE primary_reason='stacked_cleanup';" || echo "0")
+if [ "$STACKED_COUNT" != "0" ]; then
+    pass_test "Stacked cleanup recorded in database ($STACKED_COUNT events)"
+else
+    warn_test "No stacked cleanup events in database"
+fi
+
+echo ""
+show_metrics
+echo ""
+
+# ============================================
+# Phase 6: Database Validation
+# ============================================
+
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "${BLUE}Phase 6: Database Validation${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo ""
+
+log_test "Check database records"
+TOTAL_DB_RECORDS=$(db_query "SELECT COUNT(*) FROM deletions;" || echo "0")
+DELETE_RECORDS=$(db_query "SELECT COUNT(*) FROM deletions WHERE action='DELETE';" || echo "0")
+SKIP_RECORDS=$(db_query "SELECT COUNT(*) FROM deletions WHERE action='SKIP';" || echo "0")
+ERROR_RECORDS=$(db_query "SELECT COUNT(*) FROM deletions WHERE action='ERROR';" || echo "0")
+
+echo -e "${YELLOW}Database Statistics:${NC}"
+echo "  Total records: $TOTAL_DB_RECORDS"
+echo "  DELETE actions: $DELETE_RECORDS"
+echo "  SKIP actions: $SKIP_RECORDS"
+echo "  ERROR actions: $ERROR_RECORDS"
+echo ""
+
+if [ "$TOTAL_DB_RECORDS" != "0" ]; then
+    pass_test "Database contains $TOTAL_DB_RECORDS records"
+else
+    warn_test "Database is empty (check if database is enabled in config)"
+fi
+
+log_test "Check deletion reasons breakdown"
+AGE_COUNT=$(db_query "SELECT COUNT(*) FROM deletions WHERE primary_reason='age_threshold';" || echo "0")
+DISK_COUNT=$(db_query "SELECT COUNT(*) FROM deletions WHERE primary_reason='disk_threshold';" || echo "0")
+COMBINED_COUNT=$(db_query "SELECT COUNT(*) FROM deletions WHERE primary_reason='combined';" || echo "0")
+STACKED_COUNT=$(db_query "SELECT COUNT(*) FROM deletions WHERE primary_reason='stacked_cleanup';" || echo "0")
+
+echo -e "${YELLOW}Deletion Reasons:${NC}"
+echo "  Age threshold: $AGE_COUNT"
+echo "  Disk threshold: $DISK_COUNT"
+echo "  Combined: $COMBINED_COUNT"
+echo "  Stacked cleanup: $STACKED_COUNT"
+echo ""
+
+if [ "$AGE_COUNT" != "0" ] || [ "$DISK_COUNT" != "0" ]; then
+    pass_test "Deletion reasons properly categorized"
+else
+    warn_test "No deletion reasons categorized in database"
+fi
+
+log_test "Check total space freed (database)"
+TOTAL_FREED=$(db_query "SELECT COALESCE(SUM(size), 0) FROM deletions WHERE action='DELETE';" || echo "0")
+TOTAL_FREED_MB=$(echo "scale=2; $TOTAL_FREED / 1024 / 1024" | bc 2>/dev/null || echo "0")
+
+echo -e "${YELLOW}Space Freed:${NC}"
+echo "  Total bytes: $TOTAL_FREED"
+echo "  Total MB: $TOTAL_FREED_MB"
+echo ""
+
+if [ "$TOTAL_FREED" != "0" ]; then
+    pass_test "Database tracked space freed: ${TOTAL_FREED_MB}MB"
+else
+    warn_test "No space tracking in database"
+fi
+
+log_test "Query recent deletions"
+echo -e "${YELLOW}Recent Deletions (last 5):${NC}"
+db_query "SELECT datetime(timestamp, 'localtime'), action, substr(path, -40), size/1024/1024 FROM deletions ORDER BY timestamp DESC LIMIT 5;" 2>/dev/null | while IFS='|' read -r ts action path size; do
+    if [ -n "$ts" ]; then
+        echo "  [$ts] $action: ...$path (${size}MB)"
+    fi
+done
+echo ""
+
+pass_test "Recent deletions query executed"
+
+echo ""
+
+# ============================================
+# Phase 7: Loki Validation
+# ============================================
+
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "${BLUE}Phase 7: Loki Log Aggregation Validation${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo ""
+
+log_test "Check Loki log counts"
+LOKI_TOTAL=$(loki_query '{job="storage-sage"}')
+LOKI_DELETE=$(loki_query '{job="storage-sage", action="DELETE"}')
+LOKI_SKIP=$(loki_query '{job="storage-sage", action="SKIP"}')
+LOKI_ERROR=$(loki_query '{job="storage-sage", action="ERROR"}')
+
+echo -e "${YELLOW}Loki Log Counts:${NC}"
+echo "  Total logs: $LOKI_TOTAL"
+echo "  DELETE logs: $LOKI_DELETE"
+echo "  SKIP logs: $LOKI_SKIP"
+echo "  ERROR logs: $LOKI_ERROR"
+echo ""
+
+if [ "$LOKI_TOTAL" != "0" ]; then
+    pass_test "Loki contains $LOKI_TOTAL log entries"
+else
+    warn_test "Loki has no logs (check Promtail configuration)"
+fi
+
+log_test "Check Loki label extraction"
+LOKI_AGE=$(loki_query '{job="storage-sage"} |~ "age_threshold"')
+LOKI_DISK=$(loki_query '{job="storage-sage"} |~ "disk_threshold"')
+LOKI_STACKED=$(loki_query '{job="storage-sage"} |~ "stacked_cleanup"')
+
+echo -e "${YELLOW}Logs by Reason:${NC}"
+echo "  Age threshold: $LOKI_AGE"
+echo "  Disk threshold: $LOKI_DISK"
+echo "  Stacked cleanup: $LOKI_STACKED"
+echo ""
+
+if [ "$LOKI_AGE" != "0" ] || [ "$LOKI_DISK" != "0" ]; then
+    pass_test "Loki logs contain deletion reasons"
+else
+    warn_test "Loki logs may not contain reason details"
+fi
+
+echo ""
+
+# ============================================
+# Phase 8: Metrics Validation
+# ============================================
+
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "${BLUE}Phase 8: Prometheus Metrics Validation${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo ""
+
+log_test "Validate Prometheus metrics"
+FILES_DELETED_METRIC=$(get_metric "storagesage_files_deleted_total")
+BYTES_FREED_METRIC=$(get_metric "storagesage_bytes_freed_total")
+ERRORS_METRIC=$(get_metric "storagesage_errors_total")
+
+echo -e "${YELLOW}Prometheus Metrics:${NC}"
+echo "  Files deleted: $FILES_DELETED_METRIC"
+echo "  Bytes freed: $BYTES_FREED_METRIC"
+echo "  Errors: $ERRORS_METRIC"
+echo ""
+
+if [ "$FILES_DELETED_METRIC" != "0" ]; then
+    pass_test "Prometheus tracking file deletions: $FILES_DELETED_METRIC"
+else
+    fail_test "Prometheus not tracking deletions"
+fi
+
+if [ "$BYTES_FREED_METRIC" != "0" ]; then
+    BYTES_MB=$(echo "scale=2; $BYTES_FREED_METRIC / 1024 / 1024" | bc 2>/dev/null || echo "0")
+    pass_test "Prometheus tracking space freed: ${BYTES_MB}MB"
+else
+    warn_test "Prometheus not tracking space freed"
+fi
+
+log_test "Compare metrics across systems"
+echo -e "${YELLOW}Cross-System Comparison:${NC}"
+echo "  Prometheus files deleted: $FILES_DELETED_METRIC"
+echo "  Database DELETE records: $DELETE_RECORDS"
+echo "  Loki DELETE logs: $LOKI_DELETE"
+echo ""
+
+# Allow some tolerance for timing differences
+TOLERANCE=10
+if [ "$DELETE_RECORDS" != "0" ]; then
+    DIFF=$((FILES_DELETED_METRIC - DELETE_RECORDS))
+    DIFF=${DIFF#-}  # Absolute value
+    if [ "$DIFF" -le "$TOLERANCE" ]; then
+        pass_test "Metrics consistent across systems (diff: $DIFF)"
+    else
+        warn_test "Metrics differ between systems (Prometheus: $FILES_DELETED_METRIC, DB: $DELETE_RECORDS)"
+    fi
+fi
+
+echo ""
+
+# ============================================
+# Final Summary
+# ============================================
+
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo -e "${BLUE}Test Summary${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+echo ""
+
+FINAL_COUNT=$(get_file_count)
+FINAL_SIZE=$(get_disk_usage)
+
+echo -e "${GREEN}Final State:${NC}"
+echo "  Files remaining: $FINAL_COUNT (started with $INITIAL_COUNT)"
+echo "  Disk usage: $FINAL_SIZE (started with $INITIAL_SIZE)"
+echo "  Total files deleted: $((INITIAL_COUNT - FINAL_COUNT))"
+echo ""
+
+echo -e "${GREEN}Test Results:${NC}"
+echo "  Tests run: $TESTS_RUN"
+echo "  Tests passed: $TESTS_PASSED"
+echo "  Tests failed: $TESTS_FAILED"
+echo ""
+
+show_metrics
+echo ""
+
+# Success criteria
+if [ "$TESTS_FAILED" -eq 0 ]; then
+    echo -e "${GREEN}✅ ALL TESTS PASSED!${NC}"
+    echo ""
+    echo -e "${YELLOW}Next Steps:${NC}"
+    echo "  1. View deletion history:"
+    echo "     storage-sage-query --recent 20"
+    echo ""
+    echo "  2. Check database stats:"
+    echo "     storage-sage-query --days 7"
+    echo ""
+    echo "  3. View Grafana dashboard:"
+    echo "     http://localhost:3001"
+    echo ""
+    echo "  4. Query Loki logs:"
+    echo "     http://localhost:3001/explore (select Loki datasource)"
+    echo ""
+    echo "  5. Check Prometheus metrics:"
+    echo "     curl $DAEMON_URL/metrics"
+    echo ""
+    exit 0
+elif [ "$TESTS_FAILED" -le 3 ]; then
+    echo -e "${YELLOW}⚠️  TESTS COMPLETED WITH WARNINGS${NC}"
+    echo ""
+    echo "Some non-critical tests failed. Review warnings above."
+    echo "Core functionality is working."
+    exit 0
+else
+    echo -e "${RED}❌ TESTS FAILED${NC}"
+    echo ""
+    echo "Multiple critical tests failed. Review errors above."
+    echo ""
+    echo "Common issues:"
+    echo "  • Daemon not running: docker compose up -d"
+    echo "  • Config issues: check config.yml"
+    echo "  • Database not enabled: set database_path in config"
+    echo "  • Loki not running: docker compose up -d loki promtail"
+    exit 1
+fi

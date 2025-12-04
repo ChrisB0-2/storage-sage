@@ -1,0 +1,39 @@
+[Unit]
+Description=StorageSage Cleanup Daemon
+Documentation=https://github.com/yourusername/storage-sage
+After=network.target
+
+[Service]
+Type=simple
+User=storage-sage
+Group=storage-sage
+WorkingDirectory=/opt/storage-sage
+
+# Binary and config
+ExecStart=/opt/storage-sage/build/storage-sage --config /etc/storage-sage/config.yaml
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitInterval=300
+StartLimitBurst=5
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/storage-sage /var/lib/storage-sage
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=512M
+CPUQuota=50%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=storage-sage-daemon
+
+[Install]
+WantedBy=multi-user.target

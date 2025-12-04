@@ -1,0 +1,354 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+echo "🧪 StorageSage Loki Integration Test Suite"
+echo "=========================================="
+echo ""
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+PASSED=0
+FAILED=0
+WARNINGS=0
+
+test_check() {
+    local name="$1"
+    local command="$2"
+    local optional="${3:-false}"
+    
+    echo -n "  Testing $name... "
+    if eval "$command" &> /dev/null; then
+        echo -e "${GREEN}✓ PASSED${NC}"
+        ((PASSED++))
+        return 0
+    else
+        if [[ "$optional" == "true" ]]; then
+            echo -e "${YELLOW}⚠ SKIPPED${NC}"
+            ((WARNINGS++))
+            return 0
+        else
+            echo -e "${RED}✗ FAILED${NC}"
+            ((FAILED++))
+            return 1
+        fi
+    fi
+}
+
+test_query() {
+    local name="$1"
+    local query="$2"
+    local expected_min="${3:-1}"
+    
+    echo -n "  Testing $name... "
+    local result=$(curl -s -G "http://localhost:3100/loki/api/v1/query_range" \
+        --data-urlencode "query=${query}" \
+        --data-urlencode "start=$(date -u -d '10 minutes ago' +%s)000000000" \
+        --data-urlencode "end=$(date -u +%s)000000000" \
+        --data-urlencode "limit=1000" 2>/dev/null | jq -r '.data.result | length' 2>/dev/null || echo "0")
+    
+    if [[ "$result" -ge "$expected_min" ]]; then
+        echo -e "${GREEN}✓ PASSED${NC} (found $result entries)"
+        ((PASSED++))
+        return 0
+    else
+        echo -e "${RED}✗ FAILED${NC} (found $result, expected >= $expected_min)"
+        ((FAILED++))
+        return 1
+    fi
+}
+
+# ============================================
+# Phase 1: Service Health Checks
+# ============================================
+echo -e "${BLUE}Phase 1: Service Health Checks${NC}"
+echo "----------------------------------------"
+
+test_check "Loki service health" "curl -f http://localhost:3100/ready"
+test_check "Promtail service health" "curl -f http://localhost:9080/ready"
+
+echo -n "  Checking Docker containers... "
+if docker ps | grep -q "storage-sage-loki" && docker ps | grep -q "storage-sage-promtail"; then
+    echo -e "${GREEN}✓ PASSED${NC}"
+    ((PASSED++))
+else
+    echo -e "${RED}✗ FAILED${NC} (containers not running)"
+    ((FAILED++))
+fi
+
+echo ""
+
+# ============================================
+# Phase 2: Generate Test Log Entries
+# ============================================
+echo -e "${BLUE}Phase 2: Generating Test Log Entries${NC}"
+echo "----------------------------------------"
+
+echo "  Generating test log entries via Docker container..."
+
+# Generate test entries with current timestamp
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Test entries covering all scenarios
+TEST_ENTRIES=(
+    "[${TIMESTAMP}] DELETE path=/tmp/test-file-1.log object=file size=1024 deletion_reason=\"age_threshold: 10d (max=7d)\""
+    "[${TIMESTAMP}] DELETE path=/var/log/app.log object=file size=2048 deletion_reason=\"disk_threshold: 95.0% (max=90.0%)\""
+    "[${TIMESTAMP}] DELETE path=/data/old.log object=file size=4096 deletion_reason=\"age_threshold: 20d (max=7d) + disk_threshold: 92.0% (max=90.0%)\""
+    "[${TIMESTAMP}] DELETE path=/tmp/critical.log object=file size=8192 deletion_reason=\"stacked_cleanup: disk_usage=99.0% (threshold=98.0%), age=25d (min=14d)\""
+    "[${TIMESTAMP}] SKIP path=/mnt/nfs/stale.log object=nfs_stale size=0 deletion_reason=\"nfs_stale\""
+    "[${TIMESTAMP}] ERROR path=/protected/file.log object=file size=0 deletion_reason=\"permission_denied\""
+    "[${TIMESTAMP}] DELETE path=/tmp/empty-dir object=empty_directory size=0 deletion_reason=\"age_threshold: 30d (max=7d)\""
+    "[${TIMESTAMP}] DRY_RUN path=/tmp/would-delete.log object=file size=512 deletion_reason=\"age_threshold: 8d (max=7d)\""
+)
+
+# Write test entries via Docker container
+if docker ps | grep -q "storage-sage-daemon"; then
+    for entry in "${TEST_ENTRIES[@]}"; do
+        docker exec storage-sage-daemon sh -c "echo '$entry' >> /var/log/storage-sage/cleanup.log" 2>/dev/null || true
+    done
+    echo -e "  ${GREEN}✓ Generated ${#TEST_ENTRIES[@]} test log entries${NC}"
+    echo "  Waiting 15 seconds for Promtail to ship logs to Loki..."
+    sleep 15
+    ((PASSED++))
+else
+    echo -e "  ${YELLOW}⚠ Daemon container not running, skipping log generation${NC}"
+    ((WARNINGS++))
+fi
+
+echo ""
+
+# ============================================
+# Phase 3: Log Ingestion Validation
+# ============================================
+echo -e "${BLUE}Phase 3: Log Ingestion Validation${NC}"
+echo "----------------------------------------"
+
+test_query "Basic log ingestion" '{job="storage-sage"}' 1
+
+# Check if our test entries are there
+echo -n "  Checking for test log entries... "
+TEST_COUNT=$(curl -s -G "http://localhost:3100/loki/api/v1/query_range" \
+    --data-urlencode 'query={job="storage-sage"}' \
+    --data-urlencode "start=$(date -u -d '10 minutes ago' +%s)000000000" \
+    --data-urlencode "end=$(date -u +%s)000000000" \
+    --data-urlencode 'limit=100' | jq -r '[.data.result[].values[][1] | select(. | contains("test-file") or contains("old.log") or contains("critical.log") or contains("would-delete"))] | length' 2>/dev/null || echo "0")
+
+if [[ "$TEST_COUNT" -gt 0 ]]; then
+    echo -e "${GREEN}✓ PASSED${NC} (found $TEST_COUNT test entries)"
+    ((PASSED++))
+else
+    echo -e "${YELLOW}⚠ WARNING${NC} (test entries may not have been ingested yet, checking all logs...)"
+    ALL_COUNT=$(curl -s -G "http://localhost:3100/loki/api/v1/query_range" \
+        --data-urlencode 'query={job="storage-sage"}' \
+        --data-urlencode "start=$(date -u -d '10 minutes ago' +%s)000000000" \
+        --data-urlencode "end=$(date -u +%s)000000000" \
+        --data-urlencode 'limit=100' | jq -r '[.data.result[].values[][1]] | length' 2>/dev/null || echo "0")
+    echo "    Total logs in Loki: $ALL_COUNT"
+    ((WARNINGS++))
+fi
+
+echo ""
+
+# ============================================
+# Phase 4: Label Extraction Tests
+# ============================================
+echo -e "${BLUE}Phase 4: Label Extraction Tests${NC}"
+echo "----------------------------------------"
+
+echo -n "  Checking available labels... "
+LABELS=$(curl -s "http://localhost:3100/loki/api/v1/labels" | jq -r '.data[]' 2>/dev/null || echo "")
+
+REQUIRED_LABELS=("job" "action" "object_type")
+MISSING_LABELS=()
+
+for label in "${REQUIRED_LABELS[@]}"; do
+    if echo "$LABELS" | grep -q "^${label}$"; then
+        echo -e "${GREEN}✓${NC} $label"
+    else
+        echo -e "${RED}✗${NC} $label (missing)"
+        MISSING_LABELS+=("$label")
+    fi
+done
+
+if [[ ${#MISSING_LABELS[@]} -eq 0 ]]; then
+    echo -e "  ${GREEN}✓ All required labels present${NC}"
+    ((PASSED++))
+else
+    echo -e "  ${RED}✗ Missing labels: ${MISSING_LABELS[*]}${NC}"
+    ((FAILED++))
+fi
+
+# Test label value extraction
+echo ""
+echo "  Testing label value extraction:"
+
+test_query "Action label: DELETE" '{job="storage-sage", action="DELETE"}' 1
+test_query "Action label: SKIP" '{job="storage-sage", action="SKIP"}' 0
+test_query "Action label: ERROR" '{job="storage-sage", action="ERROR"}' 0
+test_query "Object type: file" '{job="storage-sage", object_type="file"}' 1
+
+# Test primary_reason label
+echo -n "  Testing primary_reason label extraction... "
+PRIMARY_REASON_LABEL=$(curl -s "http://localhost:3100/loki/api/v1/label/primary_reason/values" 2>/dev/null | jq -r '.data | length' 2>/dev/null || echo "0")
+
+if [[ "$PRIMARY_REASON_LABEL" -gt 0 ]]; then
+    echo -e "${GREEN}✓ PASSED${NC} (primary_reason is a label with $PRIMARY_REASON_LABEL values)"
+    ((PASSED++))
+else
+    echo -e "${YELLOW}⚠ WARNING${NC} (primary_reason may not be extracted as label yet)"
+    ((WARNINGS++))
+fi
+
+echo ""
+
+# ============================================
+# Phase 5: Query Functionality Tests
+# ============================================
+echo -e "${BLUE}Phase 5: Query Functionality Tests${NC}"
+echo "----------------------------------------"
+
+test_query "Query by action=DELETE" '{job="storage-sage", action="DELETE"}' 1
+test_query "Query by object_type=file" '{job="storage-sage", object_type="file"}' 1
+test_query "Query stacked_cleanup events" '{job="storage-sage"} |~ "stacked_cleanup"' 0
+test_query "Query age_threshold deletions" '{job="storage-sage"} |~ "age_threshold"' 1
+test_query "Query disk_threshold deletions" '{job="storage-sage"} |~ "disk_threshold"' 1
+
+echo ""
+
+# ============================================
+# Phase 6: Performance Tests
+# ============================================
+echo -e "${BLUE}Phase 6: Performance Tests${NC}"
+echo "----------------------------------------"
+
+echo -n "  Testing query performance (24h range)... "
+START_TIME=$(date +%s%N)
+curl -s -G "http://localhost:3100/loki/api/v1/query_range" \
+    --data-urlencode 'query={job="storage-sage"}' \
+    --data-urlencode "start=$(date -u -d '24 hours ago' +%s)000000000" \
+    --data-urlencode "end=$(date -u +%s)000000000" \
+    --data-urlencode 'limit=100' &> /dev/null
+END_TIME=$(date +%s%N)
+DURATION_MS=$(( (END_TIME - START_TIME) / 1000000 ))
+
+if [[ $DURATION_MS -lt 2000 ]]; then
+    echo -e "${GREEN}✓ PASSED${NC} (${DURATION_MS}ms - under 2s target)"
+    ((PASSED++))
+elif [[ $DURATION_MS -lt 5000 ]]; then
+    echo -e "${YELLOW}⚠ ACCEPTABLE${NC} (${DURATION_MS}ms - over 2s but under 5s)"
+    ((WARNINGS++))
+else
+    echo -e "${RED}✗ FAILED${NC} (${DURATION_MS}ms - too slow)"
+    ((FAILED++))
+fi
+
+echo ""
+
+# ============================================
+# Phase 7: Data Validation
+# ============================================
+echo -e "${BLUE}Phase 7: Data Validation${NC}"
+echo "----------------------------------------"
+
+# Validate log format parsing
+echo -n "  Validating log format parsing... "
+SAMPLE_LOG=$(curl -s -G "http://localhost:3100/loki/api/v1/query_range" \
+    --data-urlencode 'query={job="storage-sage"}' \
+    --data-urlencode "start=$(date -u -d '10 minutes ago' +%s)000000000" \
+    --data-urlencode "end=$(date -u +%s)000000000" \
+    --data-urlencode 'limit=1' | jq -r '.data.result[0].values[0][1]' 2>/dev/null || echo "")
+
+if echo "$SAMPLE_LOG" | grep -qE '^\[.*\] (DELETE|SKIP|ERROR|DRY_RUN) path='; then
+    echo -e "${GREEN}✓ PASSED${NC} (log format valid)"
+    echo "    Sample: ${SAMPLE_LOG:0:80}..."
+    ((PASSED++))
+else
+    echo -e "${RED}✗ FAILED${NC} (invalid log format)"
+    if [[ -n "$SAMPLE_LOG" ]]; then
+        echo "    Sample: ${SAMPLE_LOG:0:100}..."
+    else
+        echo "    No logs found to validate"
+    fi
+    ((FAILED++))
+fi
+
+# Validate timestamp extraction
+echo -n "  Validating timestamp extraction... "
+TIMESTAMP_VALID=$(curl -s -G "http://localhost:3100/loki/api/v1/query_range" \
+    --data-urlencode 'query={job="storage-sage"}' \
+    --data-urlencode "start=$(date -u -d '10 minutes ago' +%s)000000000" \
+    --data-urlencode "end=$(date -u +%s)000000000" \
+    --data-urlencode 'limit=1' | jq -r '.data.result[0].values[0][0]' 2>/dev/null || echo "0")
+
+if [[ "$TIMESTAMP_VALID" != "0" ]] && [[ ${#TIMESTAMP_VALID} -ge 10 ]]; then
+    echo -e "${GREEN}✓ PASSED${NC} (timestamps extracted correctly: ${TIMESTAMP_VALID:0:19})"
+    ((PASSED++))
+else
+    echo -e "${YELLOW}⚠ WARNING${NC} (timestamp format may need verification)"
+    ((WARNINGS++))
+fi
+
+echo ""
+
+# ============================================
+# Phase 8: Sample Log Display
+# ============================================
+echo -e "${BLUE}Phase 8: Sample Logs in Loki${NC}"
+echo "----------------------------------------"
+echo "  Fetching sample logs from Loki:"
+echo ""
+
+SAMPLE_LOGS=$(curl -s -G "http://localhost:3100/loki/api/v1/query_range" \
+    --data-urlencode 'query={job="storage-sage"}' \
+    --data-urlencode "start=$(date -u -d '10 minutes ago' +%s)000000000" \
+    --data-urlencode "end=$(date -u +%s)000000000" \
+    --data-urlencode 'limit=5' | jq -r '.data.result[].values[]? | "    [\(.[0] | .[0:19])] \(.[1])"' 2>/dev/null || echo "")
+
+if [[ -n "$SAMPLE_LOGS" ]]; then
+    echo "$SAMPLE_LOGS"
+    echo ""
+    echo -e "  ${GREEN}✓ Logs are visible in Loki${NC}"
+    ((PASSED++))
+else
+    echo -e "  ${YELLOW}⚠ No logs found in Loki yet${NC}"
+    ((WARNINGS++))
+fi
+
+echo ""
+
+# ============================================
+# Summary
+# ============================================
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo -e "Test Results Summary:"
+echo -e "  ${GREEN}Passed: ${PASSED}${NC}"
+echo -e "  ${RED}Failed: ${FAILED}${NC}"
+echo -e "  ${YELLOW}Warnings: ${WARNINGS}${NC}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+if [[ $FAILED -eq 0 ]]; then
+    echo -e "${GREEN}✅ All critical tests passed!${NC}"
+    echo ""
+    echo "Next steps:"
+    echo "  1. Access Grafana: http://localhost:3001"
+    echo "  2. Login with: admin / $(grep GRAFANA_PASSWORD .env | cut -d'=' -f2)"
+    echo "  3. Import dashboard: grafana/dashboards/storage-sage-deletion-analytics.json"
+    echo "  4. Verify dashboard panels show data"
+    exit 0
+else
+    echo -e "${RED}❌ Some tests failed. Please review the output above.${NC}"
+    echo ""
+    echo "Troubleshooting:"
+    echo "  1. Check Promtail logs: docker logs storage-sage-promtail"
+    echo "  2. Check Loki logs: docker logs storage-sage-loki"
+    echo "  3. Verify log file exists: docker exec storage-sage-daemon ls -la /var/log/storage-sage/cleanup.log"
+    exit 1
+fi

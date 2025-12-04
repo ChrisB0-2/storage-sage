@@ -1,0 +1,231 @@
+# StorageSage .gitignore
+
+# =============================================================================
+# Binaries and Build Artifacts
+# =============================================================================
+# Compiled binaries
+storage-sage
+storage-sage-query
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Build directories
+/dist/
+/bin/
+/build/
+
+# GoReleaser artifacts
+.goreleaser.yml.cache
+
+# =============================================================================
+# Go
+# =============================================================================
+# Test cache and coverage
+*.test
+*.prof
+coverage.txt
+*.coverprofile
+
+# Dependency directories
+/vendor/
+
+# Go workspace file
+go.work
+
+# =============================================================================
+# Environment and Secrets
+# =============================================================================
+# Environment files (keep .env.example)
+.env
+.env.local
+.env.*.local
+
+# Secrets directory
+/secrets/*
+!/secrets/.gitignore
+
+# SSL/TLS Certificates
+*.key
+*.crt
+*.pem
+*.p12
+*.pfx
+web/certs/*.key
+web/certs/*.crt
+web/certs/*.old
+
+# =============================================================================
+# Database Files
+# =============================================================================
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+/data/
+
+# =============================================================================
+# Logs
+# =============================================================================
+*.log
+/logs/
+/var/log/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# =============================================================================
+# Node.js / Frontend
+# =============================================================================
+# Dependencies
+node_modules/
+jspm_packages/
+
+# Build output
+/web/frontend/dist/
+/web/frontend-v2/dist/
+/web/frontend/build/
+/web/frontend-v2/build/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional REPL history
+.node_repl_history
+
+# Package manager lock files (keep one, comment out if using pnpm/yarn)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# =============================================================================
+# IDEs and Editors
+# =============================================================================
+# VSCode
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+*.code-workspace
+
+# JetBrains IDEs (GoLand, WebStorm, etc.)
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Vim
+*.swp
+*.swo
+*~
+.*.sw?
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# =============================================================================
+# Operating System
+# =============================================================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Linux
+*~
+.directory
+.Trash-*
+.nfs*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# =============================================================================
+# Docker
+# =============================================================================
+# Docker volumes
+/docker-data/
+/volumes/
+
+# Docker Compose override (for local dev)
+docker-compose.override.yml
+
+# =============================================================================
+# Testing and Coverage
+# =============================================================================
+/reports/*.log
+/coverage/
+.nyc_output/
+
+# =============================================================================
+# Temporary and Cache Files
+# =============================================================================
+*.tmp
+*.temp
+*.cache
+.cache/
+tmp/
+temp/
+
+# =============================================================================
+# Documentation Build Artifacts
+# =============================================================================
+/docs/_build/
+/site/
+
+# =============================================================================
+# Project-Specific
+# =============================================================================
+# Test output and compliance reports
+/reports/*.log
+/reports/*.md
+
+# Storage audit artifacts
+STORAGE_AUDIT_*.md
+COMPLIANCE_*.md
+DAEMON_*.md
+
+# Test configurations (keep test-config.yaml as example)
+*-test.yaml
+!test-config.yaml
+
+# Grafana dashboard exports (except the template)
+*.json
+!storage_sage_dashboard.json
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.*.json

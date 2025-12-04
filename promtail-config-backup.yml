@@ -1,0 +1,94 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: info
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    backoff_config:
+      min_period: 500ms
+      max_period: 5m
+      max_retries: 10
+    batchwait: 1s
+    batchsize: 1048576
+    timeout: 10s
+
+scrape_configs:
+  - job_name: storage-sage
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: storage-sage
+          __path__: /var/log/storage-sage/cleanup.log
+    
+    pipeline_stages:
+      # Stage 1: Parse the structured log format
+      - regex:
+          expression: '^\[(?P<timestamp>[^\]]+)\]\s+(?P<action>\w+)\s+path=(?P<path>\S+)\s+object=(?P<object_type>\S+)\s+size=(?P<size>\d+)(?:\s+deletion_reason="(?P<deletion_reason>[^"]*)")?'
+      
+      # Stage 2: Extract action and object_type as indexed labels
+      - labels:
+          action:
+          object_type:
+      
+      # Stage 3: Determine primary_reason from deletion_reason content
+      # Use match stage to set primary_reason based on content
+      - match:
+          selector: '{job="storage-sage"}'
+          stages:
+            # Check for stacked_cleanup (highest priority)
+            - regex:
+                source: deletion_reason
+                expression: '.*stacked_cleanup.*'
+            - labels:
+                primary_reason: "stacked_cleanup"
+          action: keep
+      
+      - match:
+          selector: '{job="storage-sage", primary_reason=""}'
+          stages:
+            # Check for combined (both disk and age)
+            - regex:
+                source: deletion_reason
+                expression: '.*disk_threshold.*age_threshold.*'
+            - labels:
+                primary_reason: "combined"
+          action: keep
+      
+      - match:
+          selector: '{job="storage-sage", primary_reason=""}'
+          stages:
+            # Check for disk_threshold only
+            - regex:
+                source: deletion_reason
+                expression: '.*disk_threshold.*'
+            - labels:
+                primary_reason: "disk_threshold"
+          action: keep
+      
+      - match:
+          selector: '{job="storage-sage", primary_reason=""}'
+          stages:
+            # Check for age_threshold only
+            - regex:
+                source: deletion_reason
+                expression: '.*age_threshold.*'
+            - labels:
+                primary_reason: "age_threshold"
+          action: keep
+      
+      - match:
+          selector: '{job="storage-sage", primary_reason=""}'
+          stages:
+            # Default to legacy if no reason matched
+            - static_labels:
+                primary_reason: "legacy"
+      
+      # Stage 4: Parse timestamp
+      - timestamp:
+          source: timestamp
+          format: RFC3339

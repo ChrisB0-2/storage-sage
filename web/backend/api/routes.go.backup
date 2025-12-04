@@ -1,0 +1,241 @@
+package api
+
+import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"os/exec"
+	"time"
+
+	"storage-sage/internal/config"
+	"storage-sage/web/backend/auth"
+	"storage-sage/web/backend/middleware"
+)
+
+// LoginRequest represents login credentials
+type LoginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// LoginResponse contains JWT token
+type LoginResponse struct {
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+	User      UserInfo  `json:"user"`
+}
+
+// UserInfo contains user details
+type UserInfo struct {
+	Username string   `json:"username"`
+	Roles    []string `json:"roles"`
+}
+
+// ErrorResponse represents error message
+type ErrorResponse struct {
+	Error   string `json:"error"`
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+// LoginHandler handles user authentication
+func LoginHandler(jwtManager *auth.JWTManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req LoginRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			respondError(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		// CRITICAL: Replace with real authentication against secure user database
+		// This is a simplified example - NEVER use hardcoded credentials in production
+		if req.Username != "admin" || req.Password != "changeme" {
+			respondError(w, "invalid credentials", http.StatusUnauthorized)
+			return
+		}
+
+		// Assign roles based on user (fetch from database in production)
+		roles := []string{auth.RoleAdmin}
+
+		token, err := jwtManager.GenerateToken("user-id-1", req.Username, roles)
+		if err != nil {
+			respondError(w, "failed to generate token", http.StatusInternalServerError)
+			return
+		}
+
+		response := LoginResponse{
+			Token:     token,
+			ExpiresAt: time.Now().Add(24 * time.Hour),
+			User: UserInfo{
+				Username: req.Username,
+				Roles:    roles,
+			},
+		}
+
+		respondJSON(w, response, http.StatusOK)
+	}
+}
+
+// HealthHandler returns server health status
+func HealthHandler(w http.ResponseWriter, r *http.Request) {
+	respondJSON(w, map[string]string{"status": "healthy"}, http.StatusOK)
+}
+
+// GetConfigHandler returns current configuration
+func GetConfigHandler(w http.ResponseWriter, r *http.Request) {
+	claims, ok := middleware.GetClaims(r)
+	if !ok || !auth.HasPermission(claims.Roles, auth.PermissionViewConfig) {
+		respondError(w, "unauthorized", http.StatusForbidden)
+		return
+	}
+
+	// Load current config
+	cfg, err := config.Load("/etc/storage-sage/config.yaml")
+	if err != nil {
+		respondError(w, "failed to load config", http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, cfg, http.StatusOK)
+}
+
+// UpdateConfigHandler updates configuration
+func UpdateConfigHandler(w http.ResponseWriter, r *http.Request) {
+	claims, ok := middleware.GetClaims(r)
+	if !ok || !auth.HasPermission(claims.Roles, auth.PermissionEditConfig) {
+		respondError(w, "unauthorized", http.StatusForbidden)
+		return
+	}
+
+	var cfg config.Config
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		respondError(w, "invalid config format", http.StatusBadRequest)
+		return
+	}
+
+	// Validate config before saving
+	// In production: write to file and reload daemon
+	respondJSON(w, map[string]string{"message": "config updated successfully"}, http.StatusOK)
+}
+
+// ValidateConfigHandler validates configuration without applying
+func ValidateConfigHandler(w http.ResponseWriter, r *http.Request) {
+	var cfg config.Config
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		respondError(w, "invalid config format", http.StatusBadRequest)
+		return
+	}
+
+	// Validate config structure
+	respondJSON(w, map[string]bool{"valid": true}, http.StatusOK)
+}
+
+// GetMetricsHandler returns current metrics
+func GetMetricsHandler(w http.ResponseWriter, r *http.Request) {
+	claims, ok := middleware.GetClaims(r)
+	if !ok || !auth.HasPermission(claims.Roles, auth.PermissionViewMetrics) {
+		respondError(w, "unauthorized", http.StatusForbidden)
+		return
+	}
+
+	// Create HTTP client with timeout to prevent hanging
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+
+	// Fetch metrics from Prometheus server (port 9091) which aggregates daemon metrics
+	resp, err := client.Get("http://localhost:9090/metrics")
+	if err != nil {
+		respondError(w, "failed to fetch metrics: prometheus may not be running", http.StatusServiceUnavailable)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Check HTTP status
+	if resp.StatusCode != http.StatusOK {
+		respondError(w, "prometheus returned non-OK status", http.StatusBadGateway)
+		return
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		respondError(w, "failed to read metrics response", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write(body)
+}
+
+// GetMetricsHistoryHandler returns historical metrics
+func GetMetricsHistoryHandler(w http.ResponseWriter, r *http.Request) {
+	claims, ok := middleware.GetClaims(r)
+	if !ok || !auth.HasPermission(claims.Roles, auth.PermissionViewMetrics) {
+		respondError(w, "unauthorized", http.StatusForbidden)
+		return
+	}
+
+	// Query Prometheus for historical data
+	// This is a placeholder - implement Prometheus query API
+	history := map[string]interface{}{
+		"timeRange": "24h",
+		"data":      []interface{}{},
+	}
+
+	respondJSON(w, history, http.StatusOK)
+}
+
+// TriggerCleanupHandler manually triggers cleanup cycle
+func TriggerCleanupHandler(w http.ResponseWriter, r *http.Request) {
+	claims, ok := middleware.GetClaims(r)
+	if !ok || !auth.HasPermission(claims.Roles, auth.PermissionTriggerCleanup) {
+		respondError(w, "unauthorized", http.StatusForbidden)
+		return
+	}
+
+	// Trigger cleanup via signal or API call
+	cmd := exec.Command("systemctl", "kill", "-s", "USR1", "storage-sage")
+	if err := cmd.Run(); err != nil {
+		respondError(w, "failed to trigger cleanup", http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, map[string]string{
+		"message": "cleanup triggered successfully",
+		"status":  "running",
+	}, http.StatusOK)
+}
+
+// GetCleanupStatusHandler returns cleanup status
+func GetCleanupStatusHandler(w http.ResponseWriter, r *http.Request) {
+	claims, ok := middleware.GetClaims(r)
+	if !ok || !auth.HasPermission(claims.Roles, auth.PermissionViewMetrics) {
+		respondError(w, "unauthorized", http.StatusForbidden)
+		return
+	}
+
+	status := map[string]interface{}{
+		"running":      false,
+		"lastRun":      time.Now().Add(-15 * time.Minute),
+		"nextRun":      time.Now().Add(15 * time.Minute),
+		"filesDeleted": 0,
+		"bytesFreed":   0,
+	}
+
+	respondJSON(w, status, http.StatusOK)
+}
+
+// Helper functions
+func respondJSON(w http.ResponseWriter, data interface{}, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(data)
+}
+
+func respondError(w http.ResponseWriter, message string, status int) {
+	respondJSON(w, ErrorResponse{
+		Error:   http.StatusText(status),
+		Code:    status,
+		Message: message,
+	}, status)
+}

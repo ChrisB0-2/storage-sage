@@ -1,0 +1,33 @@
+# Grafana Dashboard Provisioning Configuration
+# Auto-loads dashboards from the specified folder
+
+apiVersion: 1
+
+providers:
+  # ============================================================================
+  # StorageSage Dashboards
+  # ============================================================================
+  - name: 'StorageSage'
+    orgId: 1
+    folder: 'StorageSage'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false
+
+  # ============================================================================
+  # Observability Stack Dashboards
+  # ============================================================================
+  - name: 'Observability'
+    orgId: 1
+    folder: 'Observability'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/observability
+      foldersFromFilesStructure: false

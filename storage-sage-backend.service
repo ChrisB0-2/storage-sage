@@ -1,0 +1,44 @@
+[Unit]
+Description=StorageSage Backend API and Web UI
+Documentation=https://github.com/yourusername/storage-sage
+After=network.target storage-sage-daemon.service
+Wants=storage-sage-daemon.service
+
+[Service]
+Type=simple
+User=storage-sage
+Group=storage-sage
+WorkingDirectory=/opt/storage-sage/web
+
+# Environment
+Environment="JWT_SECRET_FILE=/etc/storage-sage/jwt-secret"
+Environment="JWT_EXPIRY=24h"
+
+# Binary
+ExecStart=/opt/storage-sage/build/storage-sage-web
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitInterval=300
+StartLimitBurst=5
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/storage-sage
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=1G
+CPUQuota=100%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=storage-sage-backend
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,21 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'storage-sage'
+    environment: '${ENVIRONMENT:-production}'
+
+scrape_configs:
+  # StorageSage Daemon Metrics
+  - job_name: 'storage-sage-daemon'
+    static_configs:
+      - targets: ['storage-sage-daemon:9090']
+        labels:
+          service: 'storage-sage'
+          component: 'daemon'
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+

@@ -1,0 +1,10 @@
+*.go.backup
+storage-sage-web
+*.log
+.git
+.gitignore
+.env
+*.md
+Dockerfile
+.dockerignore
+docker-compose.yml
