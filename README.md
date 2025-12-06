@@ -61,32 +61,43 @@ StorageSage is a production-grade distributed storage management system that aut
 
 ### Installation
 
+**Quick Start (Recommended):**
+
 ```bash
 # Clone the repository
 git clone https://github.com/ChrisB0-2/storage-sage.git
 cd storage-sage
 
-# Generate TLS certificates for HTTPS
-mkdir -p web/certs
-openssl req -x509 -newkey rsa:4096 -nodes \
-  -keyout web/certs/key.pem \
-  -out web/certs/cert.pem \
-  -days 365 \
-  -subj "/CN=localhost"
-
-# Create JWT secret
-mkdir -p secrets
-openssl rand -base64 32 > secrets/jwt_secret.txt
-
-# Create configuration
-cp web/config/config.yaml.example web/config/config.yaml
-
-# Edit configuration (optional)
-vim web/config/config.yaml
+# Run automated setup script (fixes permissions, creates .env, certs, etc.)
+chmod +x setup-after-clone.sh
+./setup-after-clone.sh
 
 # Start all services
-./scripts/start.sh --mode docker --all
+docker compose up -d
 ```
+
+**Manual Installation:**
+
+```bash
+# Clone the repository
+git clone https://github.com/ChrisB0-2/storage-sage.git
+cd storage-sage
+
+# Fix script permissions
+find . -name "*.sh" -type f -exec chmod +x {} \;
+
+# Create environment file
+cp .env.example .env
+# Edit .env and set JWT_SECRET (or run: openssl rand -base64 32)
+
+# Setup certificates and config
+make setup
+
+# Start all services
+docker compose up -d
+```
+
+> **Note:** If you encounter permission errors or missing files after cloning, see [SCRIPT_FIXES.md](SCRIPT_FIXES.md) for troubleshooting.
 
 ### Verify Installation
 
@@ -447,6 +458,19 @@ groups:
 ## Troubleshooting
 
 ### Common Issues
+
+**0. Scripts won't run after cloning from GitHub**
+
+```bash
+# Fix: Run the setup script
+chmod +x setup-after-clone.sh
+./setup-after-clone.sh
+
+# Or manually fix permissions
+find . -name "*.sh" -type f -exec chmod +x {} \;
+
+# See SCRIPT_FIXES.md for detailed troubleshooting
+```
 
 **1. Container won't start**
 ```bash
