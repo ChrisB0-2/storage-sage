@@ -104,8 +104,25 @@ else
     if [ ! -f web/config/config.yaml ]; then
         if [ -f web/config/config.yaml.example ]; then
             cp web/config/config.yaml.example web/config/config.yaml
+            # Verify config has at least one path (required for validation)
+            if ! grep -q "scan_paths:" web/config/config.yaml || grep -qE "scan_paths:\s*\[\]" web/config/config.yaml; then
+                echo -e "${YELLOW}⚠ Warning: config.yaml has empty scan_paths. Adding default test path...${NC}"
+                # Add a default test path if scan_paths is empty
+                if command -v sed >/dev/null 2>&1; then
+                    if [[ "$OSTYPE" == "darwin"* ]]; then
+                        sed -i '' 's|scan_paths: \[\]|scan_paths:\n  - /tmp/storage-sage-test|' web/config/config.yaml 2>/dev/null || true
+                    else
+                        sed -i 's|scan_paths: \[\]|scan_paths:\n  - /tmp/storage-sage-test|' web/config/config.yaml 2>/dev/null || true
+                    fi
+                fi
+            fi
             echo "✓ Created config.yaml"
+            echo -e "${YELLOW}  Note: Review web/config/config.yaml and add your scan paths${NC}"
+        else
+            echo -e "${YELLOW}⚠ web/config/config.yaml.example not found${NC}"
         fi
+    else
+        echo "✓ config.yaml already exists"
     fi
 fi
 echo ""

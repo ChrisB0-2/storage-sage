@@ -223,6 +223,10 @@ DAEMON_*.md
 *-test.yaml
 !test-config.yaml
 
+# Configuration files (keep example, exclude actual config)
+web/config/config.yaml
+!web/config/config.yaml.example
+
 # Grafana dashboard exports (except the template)
 *.json
 !storage_sage_dashboard.json

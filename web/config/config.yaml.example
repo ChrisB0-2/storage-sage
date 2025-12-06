@@ -1,9 +1,17 @@
 # StorageSage Configuration
 # This file is managed via the Web UI
 # Edit at: https://localhost:8443 (Config Editor)
+#
+# IMPORTANT: After copying this file, you MUST add at least one path to scan_paths
+# or configure paths with specific rules below.
 
-# Basic scan paths
-scan_paths: []
+# Basic scan paths - ADD YOUR PATHS HERE
+# At least one path is required for the daemon to start
+scan_paths:
+  - /tmp/storage-sage-test  # Example: temporary test directory
+  # - /var/log              # Example: system logs
+  # - /data/backups         # Example: backup directory
+  # - /home/user/downloads  # Example: user downloads
 
 # Global defaults
 age_off_days: 7
@@ -29,3 +37,18 @@ cleanup_options:
 
 # NFS timeout
 nfs_timeout_seconds: 5
+
+# Database path
+database_path: /var/lib/storage-sage/deletions.db
+
+# Path-specific rules (optional - overrides global defaults)
+# Uncomment and customize as needed:
+# paths:
+#   - path: /var/log
+#     age_off_days: 90
+#     min_free_percent: 10
+#     max_free_percent: 85
+#     target_free_percent: 70
+#     priority: 2
+#     stack_threshold: 95
+#     stack_age_days: 14
