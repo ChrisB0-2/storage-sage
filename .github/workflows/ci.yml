@@ -11,9 +11,26 @@ permissions:
   pull-requests: read
 
 jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Run validation
+        run: make validate
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    needs: [validate]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,14 +43,15 @@ jobs:
 
       - name: Install golangci-lint
         run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b \$(go env GOPATH)/bin v1.55.2
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.55.2
 
-      - name: Run golangci-lint
-        run: golangci-lint run --timeout=5m
+      - name: Run linters
+        run: make lint
 
   test:
     name: Test
     runs-on: \${{ matrix.os }}
+    needs: [validate]
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
@@ -54,7 +72,7 @@ jobs:
           go mod verify
 
       - name: Run tests
-        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+        run: make test
 
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.go == '1.21'
@@ -78,38 +96,46 @@ jobs:
           go-version: '1.21'
           cache: true
 
-      - name: Build daemon
-        run: |
-          CGO_ENABLED=1 go build -v -o bin/storage-sage ./cmd/storage-sage
+      - name: Build binaries
+        run: make build
 
-      - name: Build query tool
-        run: |
-          CGO_ENABLED=1 go build -v -o bin/storage-sage-query ./cmd/storage-sage-query
+      - name: Upload artifacts (IMMUTABILITY: Build Once)
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-\${{ github.sha }}
+          path: dist/
+          retention-days: 30
 
-      - name: Upload artifacts
+      - name: Upload artifacts (legacy name for compatibility)
         uses: actions/upload-artifact@v4
         with:
           name: binaries
-          path: bin/
+          path: dist/
           retention-days: 7
 
   docker:
     name: Docker Build
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: [build]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Download artifacts (IMMUTABILITY: Reuse Built Binaries)
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-\${{ github.sha }}
+          path: dist/
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker image
+      - name: Build Docker image (from artifact, no rebuild)
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./cmd/storage-sage/Dockerfile
+          file: ./cmd/storage-sage/Dockerfile.runtime
           push: false
-          tags: storage-sage:test
+          tags: storage-sage:test-\${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

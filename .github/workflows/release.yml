@@ -1,5 +1,7 @@
 name: Release
 
+# IMMUTABILITY PATTERN: Reuse artifacts from CI, no rebuild
+# This ensures: released binary == tested binary
 on:
   push:
     tags:
@@ -10,8 +12,8 @@ permissions:
   packages: write
 
 jobs:
-  goreleaser:
-    name: GoReleaser
+  release:
+    name: Create GitHub Release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -19,31 +21,114 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Download binary artifact (IMMUTABILITY)
+        uses: dawidd6/action-download-artifact@v3
         with:
-          go-version: '1.21'
-          cache: true
+          workflow: ci.yml
+          name: binaries-\${{ github.sha }}
+          path: dist
+          commit: \${{ github.sha }}
+          if_no_artifact_found: fail
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Verify artifacts
+        run: |
+          ls -lh dist/
+          test -f dist/storage-sage || (echo "ERROR: storage-sage not found" && exit 1)
+          test -f dist/storage-sage-query || (echo "ERROR: storage-sage-query not found" && exit 1)
+          chmod +x dist/storage-sage dist/storage-sage-query
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Package binaries
+        run: |
+          mkdir -p release
+          cd dist
+          # Package daemon
+          tar -czf ../release/storage-sage-linux-amd64.tar.gz storage-sage
+          # Package query tool
+          tar -czf ../release/storage-sage-query-linux-amd64.tar.gz storage-sage-query
+          cd ..
+          # Create checksums
+          cd release
+          sha256sum *.tar.gz > checksums.txt
+          cat checksums.txt
+          cd ..
 
-      - name: Log in to GitHub Container Registry
+      - name: Extract release notes
+        id: release_notes
+        run: |
+          # Extract version from tag
+          VERSION=\${GITHUB_REF#refs/tags/}
+          echo "version=\$VERSION" >> \$GITHUB_OUTPUT
+
+          # Generate release notes (customize as needed)
+          cat > release_notes.md <<EOF
+          ## StorageSage \$VERSION
+
+          ### Installation
+
+          \`\`\`bash
+          # Download and install
+          wget https://github.com/\${{ github.repository }}/releases/download/\$VERSION/storage-sage-linux-amd64.tar.gz
+          tar -xzf storage-sage-linux-amd64.tar.gz
+          sudo mv storage-sage /usr/local/bin/
+          sudo chmod +x /usr/local/bin/storage-sage
+
+          # Verify installation
+          storage-sage --version
+          \`\`\`
+
+          ### What's Changed
+
+          See [CHANGELOG.md](https://github.com/\${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+
+          ### Verification
+
+          Verify checksums:
+          \`\`\`bash
+          sha256sum -c checksums.txt
+          \`\`\`
+
+          ### Safety Guarantees
+
+          This release includes:
+          - ✅ Protected path validation (/, /etc, /bin, /usr blocked)
+          - ✅ Symlink escape detection
+          - ✅ Dry-run contract enforcement
+          - ✅ Exit code standardization (0, 2, 3, 4)
+
+          Full audit report: [docs/REMEDIATION_SUMMARY.md](https://github.com/\${{ github.repository }}/blob/main/docs/REMEDIATION_SUMMARY.md)
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release_notes.md
+          files: |
+            release/*.tar.gz
+            release/checksums.txt
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+
+      - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: \${{ github.actor }}
           password: \${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v5
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push release image
+        uses: docker/build-push-action@v5
         with:
-          distribution: goreleaser
-          version: latest
-          args: release --clean
-        env:
-          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-          GPG_KEY_FILE: \${{ secrets.GPG_KEY_FILE }}
+          context: .
+          file: ./cmd/storage-sage/Dockerfile.runtime
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/\${{ github.repository }}:\${{ steps.release_notes.outputs.version }}
+            ghcr.io/\${{ github.repository }}:latest
+          labels: |
+            org.opencontainers.image.version=\${{ steps.release_notes.outputs.version }}
+            org.opencontainers.image.source=\${{ github.repositoryUrl }}

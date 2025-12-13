@@ -11,7 +11,9 @@ import (
 	"storage-sage/internal/config"
 	"storage-sage/internal/database"
 	"storage-sage/internal/disk"
+	"storage-sage/internal/fsops"
 	"storage-sage/internal/metrics"
+	"storage-sage/internal/safety"
 	"storage-sage/internal/scan"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -68,11 +70,13 @@ func (m *cleanupMetrics) ErrorsTotal() prometheus.Counter {
 
 // Cleaner performs cleanup operations with structured logging
 type Cleaner struct {
-	logger  CleanupLogger
-	metrics Metrics
-	logFile *os.File // Optional file for structured logging
-	dryRun  bool
-	db      *database.DeletionDB // Database for recording deletion history
+	logger    CleanupLogger
+	metrics   Metrics
+	logFile   *os.File // Optional file for structured logging
+	dryRun    bool
+	db        *database.DeletionDB // Database for recording deletion history
+	validator *safety.Validator    // Safety validator for all delete operations
+	deleter   fsops.Deleter        // Filesystem deleter (real or fake)
 }
 
 // NewCleaner creates a new Cleaner instance
@@ -82,12 +86,24 @@ func NewCleaner(logger *log.Logger, logFile *os.File, dryRun bool, db *database.
 		cleanupLogger.Logger = log.Default()
 	}
 	return &Cleaner{
-		logger:  cleanupLogger,
-		metrics: &cleanupMetrics{},
-		logFile: logFile,
-		dryRun:  dryRun,
-		db:      db,
+		logger:    cleanupLogger,
+		metrics:   &cleanupMetrics{},
+		logFile:   logFile,
+		dryRun:    dryRun,
+		db:        db,
+		validator: nil, // Set via SetValidator after config is known
+		deleter:   fsops.OSDeleter{},
 	}
+}
+
+// SetValidator sets the safety validator for this cleaner
+func (c *Cleaner) SetValidator(v *safety.Validator) {
+	c.validator = v
+}
+
+// SetDeleter sets the filesystem deleter (for testing)
+func (c *Cleaner) SetDeleter(d fsops.Deleter) {
+	c.deleter = d
 }
 
 func withinAllowed(path string, cfg *config.Config) bool {
@@ -147,16 +163,29 @@ func (c *Cleaner) CleanupWithConfig(cfg *config.Config, candidates []scan.Candid
 	errorCount := 0
 
 	for _, cand := range candidates {
-		// Check if path is within allowed paths
-		if !withinAllowed(cand.Path, cfg) {
-			c.logStructured("SKIP", cand.Path, "unsafe_path", 0, "")
-			// Record skip to database
-			if c.db != nil {
-				c.db.RecordDeletion("SKIP", cand, "unsafe_path")
+		// SAFETY CONTRACT: Validate delete target through centralized validator
+		if c.validator != nil {
+			if err := c.validator.ValidateDeleteTarget(cand.Path); err != nil {
+				c.logStructured("SKIP", cand.Path, "safety_violation", 0, err.Error())
+				// Record safety violation to database
+				if c.db != nil {
+					c.db.RecordDeletion("SKIP", cand, "safety_violation: "+err.Error())
+				}
+				c.metrics.ErrorsTotal().Inc()
+				errorCount++
+				continue
 			}
-			c.metrics.ErrorsTotal().Inc()
-			errorCount++
-			continue
+		} else {
+			// Fallback to legacy path checking if validator not set (backward compat during transition)
+			if !withinAllowed(cand.Path, cfg) {
+				c.logStructured("SKIP", cand.Path, "unsafe_path", 0, "")
+				if c.db != nil {
+					c.db.RecordDeletion("SKIP", cand, "unsafe_path")
+				}
+				c.metrics.ErrorsTotal().Inc()
+				errorCount++
+				continue
+			}
 		}
 
 		// Check for stale NFS before attempting deletion
@@ -193,8 +222,9 @@ func (c *Cleaner) CleanupWithConfig(cfg *config.Config, candidates []scan.Candid
 				}
 				if c.dryRun {
 					c.logger.Info("[DRY RUN] Would remove empty directory", "path", cand.Path)
+					// DRY-RUN CONTRACT: Never call deleter in dry-run mode
 				} else {
-					err = os.Remove(cand.Path)
+					err = c.deleter.Remove(cand.Path)
 				}
 			} else {
 				objectType = "directory"
@@ -208,19 +238,21 @@ func (c *Cleaner) CleanupWithConfig(cfg *config.Config, candidates []scan.Candid
 				}
 				if c.dryRun {
 					c.logger.Info("[DRY RUN] Would remove directory recursively", "path", cand.Path)
+					// DRY-RUN CONTRACT: Never call deleter in dry-run mode
 				} else {
 					if cfg.CleanupOptions.Recursive {
-						err = os.RemoveAll(cand.Path)
+						err = c.deleter.RemoveAll(cand.Path)
 					} else {
-						err = os.Remove(cand.Path)
+						err = c.deleter.Remove(cand.Path)
 					}
 				}
 			}
 		} else {
 			if c.dryRun {
 				c.logger.Info("[DRY RUN] Would delete file", "path", cand.Path, "size", cand.Size)
+				// DRY-RUN CONTRACT: Never call deleter in dry-run mode
 			} else {
-				err = os.Remove(cand.Path)
+				err = c.deleter.Remove(cand.Path)
 			}
 		}
 

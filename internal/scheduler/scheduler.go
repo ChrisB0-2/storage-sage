@@ -12,6 +12,7 @@ import (
 	"storage-sage/internal/disk"
 	"storage-sage/internal/limiter"
 	"storage-sage/internal/metrics"
+	"storage-sage/internal/safety"
 	"storage-sage/internal/scan"
 )
 
@@ -70,6 +71,16 @@ func RunOnceWithDB(ctx context.Context, cfg *config.Config, dryRun bool, logger 
 
 	// Create cleaner with database
 	cleaner := cleanup.NewCleaner(logger, nil, dryRun, db)
+
+	// SAFETY CONTRACT: Create and set validator with allowed roots from config
+	allowedRoots := make([]string, 0, len(cfg.ScanPaths)+len(cfg.Paths))
+	allowedRoots = append(allowedRoots, cfg.ScanPaths...)
+	for _, rule := range cfg.Paths {
+		allowedRoots = append(allowedRoots, rule.Path)
+	}
+	validator := safety.NewValidator(allowedRoots, nil)
+	cleaner.SetValidator(validator)
+
 	count, freed, err := cleaner.CleanupWithConfig(cfg, candidates)
 	if err != nil {
 		metrics.ErrorsTotal.Inc()

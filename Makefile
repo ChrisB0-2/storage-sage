@@ -1,14 +1,54 @@
-.PHONY: help build up down logs clean test generate-override setup-permissions validate-env setup start health secret verify
+.PHONY: help validate lint test build build-docker up down logs clean generate-override setup-permissions validate-env setup start health secret verify
 
 .DEFAULT_GOAL := help
 
 -include .env
 export
 
+# ============================================================================
+# CI/CD Standard Targets (Required by Specification)
+# ============================================================================
+
+validate: ## Run code validation (fmt, vet)
+	@echo "Running validation..."
+	@go fmt ./...
+	@go vet ./...
+	@echo "✓ Validation passed"
+
+lint: ## Run linters
+	@echo "Running linters..."
+	@which golangci-lint > /dev/null || (echo "ERROR: golangci-lint not installed. Run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest" && exit 1)
+	@golangci-lint run --timeout=5m
+	@echo "✓ Lint passed"
+
+test: ## Run all tests (unit + integration)
+	@echo "Running tests..."
+	@go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+	@echo "✓ Tests passed"
+
+build: ## Build daemon binary to dist/storage-sage
+	@echo "Building storage-sage daemon..."
+	@mkdir -p dist
+	@CGO_ENABLED=1 go build -v -o dist/storage-sage ./cmd/storage-sage
+	@CGO_ENABLED=1 go build -v -o dist/storage-sage-query ./cmd/storage-sage-query
+	@echo "✓ Build complete: dist/storage-sage"
+	@ls -lh dist/
+
+# ============================================================================
+# Docker Management Targets
+# ============================================================================
+
 help: ## Show this help message
-	@echo "StorageSage Docker Management"
+	@echo "StorageSage Build & Docker Management"
 	@echo ""
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@echo "CI/CD Targets:"
+	@echo "  make validate   - Run code validation (fmt, vet)"
+	@echo "  make lint       - Run linters"
+	@echo "  make test       - Run all tests"
+	@echo "  make build      - Build binaries to dist/"
+	@echo ""
+	@echo "Docker Targets:"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | grep -v "^validate:" | grep -v "^lint:" | grep -v "^test:" | grep -v "^build:" | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 setup: ## Initial setup (create .env, generate certs, create config)
 	@echo "Setting up StorageSage..."
@@ -67,7 +107,7 @@ verify: ## Verify environment setup
 generate-override: ## Generate docker-compose.override.yml based on .env
 	@./scripts/generate-compose-override.sh
 
-build: validate-env ## Build all containers
+build-docker: validate-env ## Build all Docker containers
 	docker compose build
 
 up: validate-env generate-override setup-permissions ## Start all services
@@ -79,7 +119,7 @@ up: validate-env generate-override setup-permissions ## Start all services
 	@echo ""
 	@echo "Verify: docker compose exec storage-sage-backend id"
 
-start: setup build up ## Complete setup and start (production-ready single command)
+start: setup build-docker up ## Complete setup and start (production-ready single command)
 	@echo ""
 	@echo "✓ StorageSage started successfully!"
 	@echo ""
@@ -118,7 +158,7 @@ health: ## Check service health status
 	@echo "Health Check Details:"
 	@docker inspect --format='{{.Name}}: {{.State.Health.Status}}' $$(docker ps -q --filter "name=storage-sage") 2>/dev/null || echo "No health checks available"
 
-test: ## Run health checks on all services
+health-check: ## Run health checks on all services
 	@echo "Running health checks..."
 	@echo ""
 	@echo "Checking backend..."
@@ -134,3 +174,14 @@ verify-security: ## Verify non-root execution
 	@docker compose exec storage-sage-backend id
 	@echo ""
 	@echo "Expected: uid=1000(storagesage)"
+
+rollback: ## Rollback to previous version (Usage: make rollback VERSION=v1.0.0)
+	@if [ -z "$(VERSION)" ]; then \
+		echo "ERROR: VERSION not specified"; \
+		echo "Usage: make rollback VERSION=v1.0.0"; \
+		exit 1; \
+	fi
+	@echo "Rolling back to version $(VERSION)..."
+	@docker compose down
+	@echo "✓ Rollback complete. Start with: make up"
+	@echo "  Note: Update image tag in docker-compose.yml to $(VERSION) before running 'make up'"
