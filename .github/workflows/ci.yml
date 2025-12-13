@@ -99,7 +99,7 @@ jobs:
       - name: Build binaries
         run: make build
 
-      - name: Upload artifacts (IMMUTABILITY: Build Once)
+      - name: "Upload artifacts (IMMUTABILITY: Build Once)"
         uses: actions/upload-artifact@v4
         with:
           name: "binaries-${{ github.sha }}"
@@ -115,7 +115,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download artifacts (IMMUTABILITY: Reuse Built Binaries)
+      - name: "Download artifacts (IMMUTABILITY: Reuse Built Binaries)"
         uses: actions/download-artifact@v4
         with:
           name: "binaries-${{ github.sha }}"
