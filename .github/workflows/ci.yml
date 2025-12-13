@@ -102,7 +102,7 @@ jobs:
       - name: Upload artifacts (IMMUTABILITY: Build Once)
         uses: actions/upload-artifact@v4
         with:
-          name: binaries-\${{ github.sha }}
+          name: binaries-${{ github.sha }}
           path: dist/
           retention-days: 30
 
@@ -124,7 +124,7 @@ jobs:
       - name: Download artifacts (IMMUTABILITY: Reuse Built Binaries)
         uses: actions/download-artifact@v4
         with:
-          name: binaries-\${{ github.sha }}
+          name: binaries-${{ github.sha }}
           path: dist/
 
       - name: Set up Docker Buildx
