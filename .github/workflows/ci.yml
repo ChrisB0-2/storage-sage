@@ -50,7 +50,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: \${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     needs: [validate]
     strategy:
       matrix:
@@ -130,6 +130,6 @@ jobs:
           context: .
           file: ./cmd/storage-sage/Dockerfile.runtime
           push: false
-          tags: storage-sage:test-\${{ github.sha }}
+          tags: storage-sage:test-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
