@@ -118,7 +118,6 @@ func registerCleanupMetrics() {
 func SetCleanupMode(mode string) {
 	modeMutex.Lock()
 	defer modeMutex.Unlock()
-	currentMode = mode
 
 	// Reset all mode gauges to 0
 	CleanupLastMode.Reset()
