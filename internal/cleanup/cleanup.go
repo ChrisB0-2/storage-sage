@@ -346,8 +346,13 @@ func (c *Cleaner) logStructured(action, path, objectType string, size int64, del
 
 	// Write to log file if available
 	if c.logFile != nil {
-		c.logFile.WriteString(logEntry + "\n")
-		c.logFile.Sync() // Ensure immediate write to disk
+		if _, err := c.logFile.WriteString(logEntry + "\n"); err != nil {
+			// Log to stderr as fallback since log file write failed
+			fmt.Fprintf(os.Stderr, "failed to write to cleanup log: %v\n", err)
+		}
+		if err := c.logFile.Sync(); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to sync cleanup log: %v\n", err)
+		}
 	}
 
 	// Also log to standard logger

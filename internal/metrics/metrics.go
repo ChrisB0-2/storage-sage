@@ -87,15 +87,21 @@ func StartServer(addr string, logger *log.Logger) {
 
 		if hc != nil && hc.IsHealthy() {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"status":"ok","healthy":true}`))
+			if _, err := w.Write([]byte(`{"status":"ok","healthy":true}`)); err != nil {
+				// HTTP write failed - connection likely closed, nothing to do
+			}
 		} else if hc != nil {
 			// Report unhealthy state with component details
 			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte(`{"status":"degraded","healthy":false}`))
+			if _, err := w.Write([]byte(`{"status":"degraded","healthy":false}`)); err != nil {
+				// HTTP write failed - connection likely closed, nothing to do
+			}
 		} else {
 			// No health checker configured, default to ok
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"status":"ok","healthy":true}`))
+			if _, err := w.Write([]byte(`{"status":"ok","healthy":true}`)); err != nil {
+				// HTTP write failed - connection likely closed, nothing to do
+			}
 		}
 	})
 
@@ -111,7 +117,9 @@ func StartServer(addr string, logger *log.Logger) {
 			select {
 			case triggerChannel <- syscall.SIGUSR1:
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte("Cleanup triggered"))
+				if _, err := w.Write([]byte("Cleanup triggered")); err != nil {
+					// HTTP write failed - connection likely closed, nothing to do
+				}
 			default:
 				http.Error(w, "Trigger channel full", http.StatusServiceUnavailable)
 			}
@@ -132,7 +140,9 @@ func StartServer(addr string, logger *log.Logger) {
 			select {
 			case reloadChannel <- syscall.SIGHUP:
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte("Config reload triggered"))
+				if _, err := w.Write([]byte("Config reload triggered")); err != nil {
+					// HTTP write failed - connection likely closed, nothing to do
+				}
 			default:
 				http.Error(w, "Reload channel full", http.StatusServiceUnavailable)
 			}

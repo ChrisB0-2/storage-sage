@@ -339,7 +339,10 @@ func GetMetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[GetMetricsHandler] Successfully fetched %d bytes from daemon", len(body))
 	w.Header().Set("Content-Type", "text/plain")
-	w.Write(body)
+	if _, err := w.Write(body); err != nil {
+		// Client connection closed, response already committed
+		log.Printf("failed to write response body: %v", err)
+	}
 }
 
 // GetMetricsHistoryHandler returns historical metrics
