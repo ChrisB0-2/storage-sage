@@ -20,7 +20,6 @@ var (
 	currentSrv     *http.Server
 	triggerChannel chan os.Signal
 	reloadChannel  chan os.Signal
-	currentMode    string
 
 	// Global health checker instance
 	globalHealthChecker *HealthChecker
@@ -87,21 +86,15 @@ func StartServer(addr string, logger *log.Logger) {
 
 		if hc != nil && hc.IsHealthy() {
 			w.WriteHeader(http.StatusOK)
-			if _, err := w.Write([]byte(`{"status":"ok","healthy":true}`)); err != nil {
-				// HTTP write failed - connection likely closed, nothing to do
-			}
+			_, _ = w.Write([]byte(`{"status":"ok","healthy":true}`))
 		} else if hc != nil {
 			// Report unhealthy state with component details
 			w.WriteHeader(http.StatusServiceUnavailable)
-			if _, err := w.Write([]byte(`{"status":"degraded","healthy":false}`)); err != nil {
-				// HTTP write failed - connection likely closed, nothing to do
-			}
+			_, _ = w.Write([]byte(`{"status":"degraded","healthy":false}`))
 		} else {
 			// No health checker configured, default to ok
 			w.WriteHeader(http.StatusOK)
-			if _, err := w.Write([]byte(`{"status":"ok","healthy":true}`)); err != nil {
-				// HTTP write failed - connection likely closed, nothing to do
-			}
+			_, _ = w.Write([]byte(`{"status":"ok","healthy":true}`))
 		}
 	})
 
@@ -117,9 +110,7 @@ func StartServer(addr string, logger *log.Logger) {
 			select {
 			case triggerChannel <- syscall.SIGUSR1:
 				w.WriteHeader(http.StatusOK)
-				if _, err := w.Write([]byte("Cleanup triggered")); err != nil {
-					// HTTP write failed - connection likely closed, nothing to do
-				}
+				_, _ = w.Write([]byte("Cleanup triggered"))
 			default:
 				http.Error(w, "Trigger channel full", http.StatusServiceUnavailable)
 			}
@@ -140,9 +131,7 @@ func StartServer(addr string, logger *log.Logger) {
 			select {
 			case reloadChannel <- syscall.SIGHUP:
 				w.WriteHeader(http.StatusOK)
-				if _, err := w.Write([]byte("Config reload triggered")); err != nil {
-					// HTTP write failed - connection likely closed, nothing to do
-				}
+				_, _ = w.Write([]byte("Config reload triggered"))
 			default:
 				http.Error(w, "Reload channel full", http.StatusServiceUnavailable)
 			}

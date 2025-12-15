@@ -147,9 +147,9 @@ func TestRecordDeletion(t *testing.T) {
 
 	now := time.Now()
 	candidate := scan.Candidate{
-		Path:   "/test/file.log",
-		Size:   1024,
-		IsDir:  false,
+		Path:       "/test/file.log",
+		Size:       1024,
+		IsDir:      false,
 		IsEmptyDir: false,
 		DeletionReason: scan.DeletionReason{
 			EvaluatedAt: now,
@@ -210,9 +210,9 @@ func TestRecordAllFieldTypes(t *testing.T) {
 		{
 			name: "age_threshold_deletion",
 			candidate: scan.Candidate{
-				Path:   "/var/log/old.log",
-				Size:   2048,
-				IsDir:  false,
+				Path:  "/var/log/old.log",
+				Size:  2048,
+				IsDir: false,
 				DeletionReason: scan.DeletionReason{
 					EvaluatedAt: time.Now(),
 					AgeThreshold: &scan.AgeReason{
@@ -228,9 +228,9 @@ func TestRecordAllFieldTypes(t *testing.T) {
 		{
 			name: "disk_threshold_deletion",
 			candidate: scan.Candidate{
-				Path:   "/data/large.dat",
-				Size:   1073741824, // 1GB
-				IsDir:  false,
+				Path:  "/data/large.dat",
+				Size:  1073741824, // 1GB
+				IsDir: false,
 				DeletionReason: scan.DeletionReason{
 					EvaluatedAt: time.Now(),
 					DiskThreshold: &scan.DiskReason{
@@ -246,9 +246,9 @@ func TestRecordAllFieldTypes(t *testing.T) {
 		{
 			name: "stacked_cleanup",
 			candidate: scan.Candidate{
-				Path:   "/backups/stack/2024-01-01.tar.gz",
-				Size:   5368709120, // 5GB
-				IsDir:  false,
+				Path:  "/backups/stack/2024-01-01.tar.gz",
+				Size:  5368709120, // 5GB
+				IsDir: false,
 				DeletionReason: scan.DeletionReason{
 					EvaluatedAt: time.Now(),
 					StackedCleanup: &scan.StackedReason{
@@ -266,9 +266,9 @@ func TestRecordAllFieldTypes(t *testing.T) {
 		{
 			name: "skip_action",
 			candidate: scan.Candidate{
-				Path:   "/active/server.log",
-				Size:   512,
-				IsDir:  false,
+				Path:  "/active/server.log",
+				Size:  512,
+				IsDir: false,
 				DeletionReason: scan.DeletionReason{
 					EvaluatedAt: time.Now(),
 					PathRule:    "/active/*",
@@ -280,9 +280,9 @@ func TestRecordAllFieldTypes(t *testing.T) {
 		{
 			name: "error_action",
 			candidate: scan.Candidate{
-				Path:   "/failed/delete.tmp",
-				Size:   256,
-				IsDir:  false,
+				Path:  "/failed/delete.tmp",
+				Size:  256,
+				IsDir: false,
 				DeletionReason: scan.DeletionReason{
 					EvaluatedAt: time.Now(),
 					PathRule:    "/failed/*",
@@ -538,7 +538,7 @@ func TestPaginationMethods(t *testing.T) {
 		}
 
 		// Test second page
-		records, total, err = db.GetRecentDeletionsPaginated(10, 10)
+		records, _, err = db.GetRecentDeletionsPaginated(10, 10)
 		if err != nil {
 			t.Fatalf("GetRecentDeletionsPaginated page 2 failed: %v", err)
 		}
@@ -547,7 +547,7 @@ func TestPaginationMethods(t *testing.T) {
 		}
 
 		// Test last page
-		records, total, err = db.GetRecentDeletionsPaginated(10, 20)
+		records, _, err = db.GetRecentDeletionsPaginated(10, 20)
 		if err != nil {
 			t.Fatalf("GetRecentDeletionsPaginated page 3 failed: %v", err)
 		}
@@ -717,13 +717,13 @@ func TestDatabaseStats(t *testing.T) {
 	if _, ok := stats["oldest_record"]; !ok {
 		// Try to read the raw string to debug
 		var oldestStr string
-		db.db.QueryRow("SELECT MIN(timestamp) FROM deletions").Scan(&oldestStr)
+		_ = db.db.QueryRow("SELECT MIN(timestamp) FROM deletions").Scan(&oldestStr)
 		t.Errorf("oldest_record not found in stats. Raw SQL value: '%s'", oldestStr)
 	}
 
 	if _, ok := stats["newest_record"]; !ok {
 		var newestStr string
-		db.db.QueryRow("SELECT MAX(timestamp) FROM deletions").Scan(&newestStr)
+		_ = db.db.QueryRow("SELECT MAX(timestamp) FROM deletions").Scan(&newestStr)
 		t.Errorf("newest_record not found in stats. Raw SQL value: '%s'", newestStr)
 	}
 
@@ -857,7 +857,7 @@ func TestIndexUtilization(t *testing.T) {
 				hasRows = true
 				var id, parent, notused int
 				var detail string
-				rows.Scan(&id, &parent, &notused, &detail)
+				_ = rows.Scan(&id, &parent, &notused, &detail)
 				t.Logf("Query plan: %s", detail)
 			}
 
@@ -946,7 +946,7 @@ func TestDatabaseErrorHandling(t *testing.T) {
 		if err != nil {
 			t.Skipf("Cannot change file permissions: %v", err)
 		}
-		defer os.Chmod(dbPath, 0644) // Restore permissions
+		defer func() { _ = os.Chmod(dbPath, 0644) }() // Restore permissions
 
 		// Try to open and write
 		db, err = NewDeletionDB(dbPath)

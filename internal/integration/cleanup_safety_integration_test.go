@@ -95,8 +95,8 @@ func TestCleanupSafetyIntegration(t *testing.T) {
 	// 3b. EXECUTE: Assert only allowed deletions occur
 	t.Run("RealMode_OnlyAllowedDeletes", func(t *testing.T) {
 		// Recreate files if dry-run test ran first
-		os.WriteFile(junkFile, []byte("deletable content"), 0644)
-		os.WriteFile(deletableFile, []byte("old backup"), 0644)
+		_ = os.WriteFile(junkFile, []byte("deletable content"), 0644)
+		_ = os.WriteFile(deletableFile, []byte("old backup"), 0644)
 
 		cleaner := cleanup.NewCleaner(log.Default(), nil, false, nil) // dryRun=false
 		cleaner.SetValidator(safety.NewValidator([]string{allowedDir}, nil))

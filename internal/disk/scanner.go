@@ -167,7 +167,7 @@ func scanWithDu(path string) (usedBytes int64, fileCount int64, err error) {
 // estimateFileCount does a limited walk to estimate total file count
 func estimateFileCount(path string, sampleLimit int) int64 {
 	var count int64
-	filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || count >= int64(sampleLimit) {
 			return filepath.SkipAll
 		}

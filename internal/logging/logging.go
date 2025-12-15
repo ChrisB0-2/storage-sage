@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"storage-sage/internal/config"
@@ -18,9 +19,6 @@ const (
 // Logger wraps the standard logger with rotation support
 type Logger struct {
 	*log.Logger
-	config     *config.Config
-	lastRotate time.Time
-	rotateDays int
 }
 
 // New creates a new logger with rotation support
@@ -99,7 +97,7 @@ func cleanupOldLogs(logPath string, rotationDays int) {
 
 		// Check if this is a rotated log file
 		name := entry.Name()
-		if !filepath.HasPrefix(name, baseName+".") {
+		if !strings.HasPrefix(filepath.Base(name), filepath.Base(baseName)+".") {
 			continue
 		}
 

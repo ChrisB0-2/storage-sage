@@ -169,7 +169,7 @@ func (c *Cleaner) CleanupWithConfig(cfg *config.Config, candidates []scan.Candid
 				c.logStructured("SKIP", cand.Path, "safety_violation", 0, err.Error())
 				// Record safety violation to database
 				if c.db != nil {
-					c.db.RecordDeletion("SKIP", cand, "safety_violation: "+err.Error())
+					_ = c.db.RecordDeletion("SKIP", cand, "safety_violation: "+err.Error())
 				}
 				c.metrics.ErrorsTotal().Inc()
 				errorCount++
@@ -180,7 +180,7 @@ func (c *Cleaner) CleanupWithConfig(cfg *config.Config, candidates []scan.Candid
 			if !withinAllowed(cand.Path, cfg) {
 				c.logStructured("SKIP", cand.Path, "unsafe_path", 0, "")
 				if c.db != nil {
-					c.db.RecordDeletion("SKIP", cand, "unsafe_path")
+					_ = c.db.RecordDeletion("SKIP", cand, "unsafe_path")
 				}
 				c.metrics.ErrorsTotal().Inc()
 				errorCount++
@@ -194,7 +194,7 @@ func (c *Cleaner) CleanupWithConfig(cfg *config.Config, candidates []scan.Candid
 				c.logStructured("SKIP", cand.Path, "nfs_stale", cand.Size, "")
 				// Record skip to database
 				if c.db != nil {
-					c.db.RecordDeletion("SKIP", cand, "nfs_stale")
+					_ = c.db.RecordDeletion("SKIP", cand, "nfs_stale")
 				}
 				c.metrics.ErrorsTotal().Inc()
 				errorCount++

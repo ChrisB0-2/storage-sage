@@ -137,11 +137,11 @@ func ScanWithLogger(cfg *config.Config, now time.Time, logger *log.Logger) ([]Ca
 // getPathResults analyzes all paths and determines cleanup needs
 func getPathResults(cfg *config.Config, now time.Time) []PathScanResult {
 	results := make([]PathScanResult, 0)
-	
+
 	// Create a map to track paths that have specific configs
 	// This prevents duplicate paths and ensures specific configs override defaults
 	pathMap := make(map[string]bool)
-	
+
 	// Process paths with rules first (specific configs take precedence)
 	for i := range cfg.Paths {
 		path := cfg.Paths[i].Path
@@ -156,7 +156,7 @@ func getPathResults(cfg *config.Config, now time.Time) []PathScanResult {
 		if pathMap[path] {
 			continue
 		}
-		
+
 		rule := &config.PathRule{
 			Path:              path,
 			AgeOffDays:        cfg.AgeOffDays,
@@ -397,18 +397,3 @@ func (s *Scanner) scanPath(rule *config.PathRule, diskUsage float64) ([]Candidat
 	return candidates, nil
 }
 
-// uniqueRoots is kept for backward compatibility but may not be used
-func uniqueRoots(cfg *config.Config) map[string]int {
-	roots := make(map[string]int)
-	for _, p := range cfg.ScanPaths {
-		roots[p] = cfg.AgeOffDays
-	}
-	for _, rule := range cfg.Paths {
-		age := rule.AgeOffDays
-		if age <= 0 {
-			age = cfg.AgeOffDays
-		}
-		roots[rule.Path] = age
-	}
-	return roots
-}

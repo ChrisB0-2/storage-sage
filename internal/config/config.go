@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	yaml "gopkg.in/yaml.v3"
 )
 
 type PathRule struct {
@@ -40,41 +40,40 @@ type CleanupOptions struct {
 }
 
 type ScanOptimizations struct {
-	FastScanThreshold int `yaml:"fast_scan_threshold" json:"fast_scan_threshold"` // File count threshold for du -sb mode (default: 1M)
-	CacheTTLMinutes   int `yaml:"cache_ttl_minutes" json:"cache_ttl_minutes"`     // Cache TTL in minutes (default: 5)
+	FastScanThreshold int  `yaml:"fast_scan_threshold" json:"fast_scan_threshold"` // File count threshold for du -sb mode (default: 1M)
+	CacheTTLMinutes   int  `yaml:"cache_ttl_minutes" json:"cache_ttl_minutes"`     // Cache TTL in minutes (default: 5)
 	ParallelScans     bool `yaml:"parallel_scans" json:"parallel_scans"`           // Enable parallel path scanning (default: true)
 	UseFastScan       bool `yaml:"use_fast_scan" json:"use_fast_scan"`             // Enable du -sb for large paths (default: true)
 	UseCache          bool `yaml:"use_cache" json:"use_cache"`                     // Enable scan caching (default: true)
 }
 
 type WorkerPoolConfig struct {
-	Enabled         bool `yaml:"enabled" json:"enabled"`                   // Enable worker pool for concurrent cleanup (default: true)
-	Concurrency     int  `yaml:"concurrency" json:"concurrency"`           // Number of concurrent workers (default: 5, like beerus)
-	BatchSize       int  `yaml:"batch_size" json:"batch_size"`             // Files per batch (default: 100)
-	TimeoutSeconds  int  `yaml:"timeout_seconds" json:"timeout_seconds"`   // Timeout per batch in seconds (default: 30)
+	Enabled        bool `yaml:"enabled" json:"enabled"`                 // Enable worker pool for concurrent cleanup (default: true)
+	Concurrency    int  `yaml:"concurrency" json:"concurrency"`         // Number of concurrent workers (default: 5, like beerus)
+	BatchSize      int  `yaml:"batch_size" json:"batch_size"`           // Files per batch (default: 100)
+	TimeoutSeconds int  `yaml:"timeout_seconds" json:"timeout_seconds"` // Timeout per batch in seconds (default: 30)
 }
 
 type Config struct {
-	ScanPaths          []string           `yaml:"scan_paths" json:"scan_paths"`
-	MinFreePercent     int                `yaml:"min_free_percent" json:"min_free_percent"`
-	AgeOffDays         int                `yaml:"age_off_days" json:"age_off_days"`
-	IntervalMinutes    int                `yaml:"interval_minutes" json:"interval_minutes"`
-	Paths              []PathRule         `yaml:"paths" json:"paths"`
-	Prometheus         PrometheusCfg      `yaml:"prometheus" json:"prometheus"`
-	Logging            LoggingCfg         `yaml:"logging" json:"logging"`
-	ResourceLimits     ResourceLimits     `yaml:"resource_limits" json:"resource_limits"`
-	CleanupOptions     CleanupOptions     `yaml:"cleanup_options" json:"cleanup_options"`
-	ScanOptimizations  ScanOptimizations  `yaml:"scan_optimizations" json:"scan_optimizations"`
-	WorkerPool         WorkerPoolConfig   `yaml:"worker_pool" json:"worker_pool"`                 // Worker pool configuration
-	NFSTimeout         int                `yaml:"nfs_timeout_seconds" json:"nfs_timeout_seconds"` // Timeout for NFS operations
-	DatabasePath       string             `yaml:"database_path" json:"database_path"`             // Path to SQLite database for deletion history
+	ScanPaths         []string          `yaml:"scan_paths" json:"scan_paths"`
+	MinFreePercent    int               `yaml:"min_free_percent" json:"min_free_percent"`
+	AgeOffDays        int               `yaml:"age_off_days" json:"age_off_days"`
+	IntervalMinutes   int               `yaml:"interval_minutes" json:"interval_minutes"`
+	Paths             []PathRule        `yaml:"paths" json:"paths"`
+	Prometheus        PrometheusCfg     `yaml:"prometheus" json:"prometheus"`
+	Logging           LoggingCfg        `yaml:"logging" json:"logging"`
+	ResourceLimits    ResourceLimits    `yaml:"resource_limits" json:"resource_limits"`
+	CleanupOptions    CleanupOptions    `yaml:"cleanup_options" json:"cleanup_options"`
+	ScanOptimizations ScanOptimizations `yaml:"scan_optimizations" json:"scan_optimizations"`
+	WorkerPool        WorkerPoolConfig  `yaml:"worker_pool" json:"worker_pool"`                 // Worker pool configuration
+	NFSTimeout        int               `yaml:"nfs_timeout_seconds" json:"nfs_timeout_seconds"` // Timeout for NFS operations
+	DatabasePath      string            `yaml:"database_path" json:"database_path"`             // Path to SQLite database for deletion history
 }
 
 var (
-	errNoPaths         = errors.New("configuration must specify scan_paths or paths")
-	errInvalidPath     = errors.New("path must be absolute")
-	errNegativeAge     = errors.New("age_off_days cannot be negative")
-	errInvalidInterval = errors.New("interval_minutes must be positive")
+	errNoPaths     = errors.New("configuration must specify scan_paths or paths")
+	errInvalidPath = errors.New("path must be absolute")
+	errNegativeAge = errors.New("age_off_days cannot be negative")
 )
 
 func Load(path string) (*Config, error) {
