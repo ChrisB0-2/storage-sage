@@ -216,7 +216,7 @@ func (c *Cleaner) CleanupWithConfig(cfg *config.Config, candidates []scan.Candid
 					c.logStructured("SKIP", cand.Path, objectType, 0, deletionReason)
 					// Record skip to database
 					if c.db != nil {
-						c.db.RecordDeletion("SKIP", cand, "delete_dirs_disabled")
+						_ = c.db.RecordDeletion("SKIP", cand, "delete_dirs_disabled")
 					}
 					continue
 				}
@@ -232,7 +232,7 @@ func (c *Cleaner) CleanupWithConfig(cfg *config.Config, candidates []scan.Candid
 					c.logStructured("SKIP", cand.Path, objectType, 0, deletionReason)
 					// Record skip to database
 					if c.db != nil {
-						c.db.RecordDeletion("SKIP", cand, "delete_dirs_disabled")
+						_ = c.db.RecordDeletion("SKIP", cand, "delete_dirs_disabled")
 					}
 					continue
 				}
@@ -262,7 +262,7 @@ func (c *Cleaner) CleanupWithConfig(cfg *config.Config, candidates []scan.Candid
 				c.logStructured("SKIP", cand.Path, objectType, cand.Size, "nfs_stale_during_delete")
 				// Record skip to database
 				if c.db != nil {
-					c.db.RecordDeletion("SKIP", cand, "nfs_stale_during_delete")
+					_ = c.db.RecordDeletion("SKIP", cand, "nfs_stale_during_delete")
 				}
 				c.metrics.ErrorsTotal().Inc()
 				errorCount++
