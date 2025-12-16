@@ -43,7 +43,7 @@ func (l *cleanupStdLogger) logWithLevel(level, msg string, args ...interface{}) 
 	var parts []interface{}
 	parts = append(parts, fmt.Sprintf("[%s]", level), msg)
 	parts = append(parts, args...)
-	l.Logger.Println(parts...)
+	l.Println(parts...)
 }
 
 // Metrics interface for cleanup metrics

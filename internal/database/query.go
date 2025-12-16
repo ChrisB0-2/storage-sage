@@ -110,7 +110,7 @@ func (d *DeletionDB) GetDeletionCountByReason() (map[string]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	counts := make(map[string]int)
 	for rows.Next() {
@@ -137,7 +137,7 @@ func (d *DeletionDB) GetDeletionCountByAction() (map[string]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	counts := make(map[string]int)
 	for rows.Next() {
@@ -223,7 +223,7 @@ func (d *DeletionDB) GetTopPathsByDeletionCount(limit int) (map[string]int, erro
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	counts := make(map[string]int)
 	for rows.Next() {
@@ -258,7 +258,7 @@ func (d *DeletionDB) queryDeletions(query string, args ...interface{}) ([]Deleti
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var records []DeletionRecord
 	for rows.Next() {

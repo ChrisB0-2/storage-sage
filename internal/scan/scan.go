@@ -42,7 +42,7 @@ func (l *stdLogger) logWithLevel(level, msg string, args ...interface{}) {
 	var parts []interface{}
 	parts = append(parts, fmt.Sprintf("[%s]", level), msg)
 	parts = append(parts, args...)
-	l.Logger.Println(parts...)
+	l.Println(parts...)
 }
 
 // Scanner performs file system scans with deletion reason tracking

@@ -60,7 +60,7 @@ func NewDeletionDB(dbPath string) (*DeletionDB, error) {
 	}
 	defer func() {
 		if err != nil {
-			db.Close()
+			_ = db.Close()
 		}
 	}()
 
