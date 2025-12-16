@@ -214,6 +214,8 @@ jobs:
     if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Send email notification
+        # Will skip gracefully if MAIL_* secrets are not configured
+        continue-on-error: true
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: ${{ secrets.MAIL_SERVER }}
