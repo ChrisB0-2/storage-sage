@@ -30,15 +30,26 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download binary artifact (IMMUTABILITY)
+      # Download artifacts from workflow_run events (triggered after CI completes)
+      - name: Download binary artifact (IMMUTABILITY - workflow_run)
+        if: github.event_name == 'workflow_run'
         uses: dawidd6/action-download-artifact@v3
         with:
           workflow: ci.yml
-          name: binaries-\${{ github.event.workflow_run.head_sha || github.sha }}
+          name: binaries-\${{ github.event.workflow_run.head_sha }}
           path: dist
-          # Use run_id for workflow_run events, commit for tag push events
-          run_id: \${{ github.event.workflow_run.id || '' }}
-          commit: \${{ github.event_name == 'push' && github.sha || '' }}
+          run_id: \${{ github.event.workflow_run.id }}
+          if_no_artifact_found: fail
+
+      # Download artifacts from tag push events
+      - name: Download binary artifact (IMMUTABILITY - tag push)
+        if: github.event_name == 'push'
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          workflow: ci.yml
+          name: binaries-\${{ github.sha }}
+          path: dist
+          commit: \${{ github.sha }}
           if_no_artifact_found: fail
 
       - name: Verify artifact exists
