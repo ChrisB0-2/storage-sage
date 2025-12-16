@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  security-events: write  # Required for SARIF uploads (gosec, gitleaks)
 
 jobs:
   validate:
@@ -17,6 +18,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Required for gitleaks full history scan
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -26,6 +29,17 @@ jobs:
 
       - name: Run validation
         run: make validate
+
+      - name: Go Vulnerability Check (govulncheck)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: Secrets Scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_SUMMARY: true
 
   lint:
     name: Lint
@@ -47,6 +61,17 @@ jobs:
 
       - name: Run linters
         run: make lint
+
+      - name: Security Lint (gosec)
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          gosec -fmt sarif -out gosec-results.sarif -stdout -verbose=text ./...
+
+      - name: Upload gosec SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gosec-results.sarif
+          category: gosec
 
   test:
     name: Test
@@ -74,6 +99,17 @@ jobs:
       - name: Run tests
         run: make test
 
+      - name: Coverage Enforcement (80% threshold)
+        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.21'
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.txt | grep total | awk '{print $3}' | sed 's/%//')
+          echo "Total coverage: ${COVERAGE}%"
+          if (( $(echo "$COVERAGE < 80.0" | bc -l) )); then
+            echo "❌ Coverage ${COVERAGE}% is below 80% threshold"
+            exit 1
+          fi
+          echo "✅ Coverage ${COVERAGE}% meets 80% threshold"
+
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.go == '1.21'
         uses: codecov/codecov-action@v4
@@ -99,11 +135,29 @@ jobs:
       - name: Build binaries
         run: make build
 
+      - name: Generate SBOM (Software Bill of Materials)
+        uses: anchore/sbom-action@v0
+        with:
+          format: cyclonedx-json
+          output-file: sbom.cyclonedx.json
+          upload-artifact: true
+          upload-release-assets: false
+
+      - name: Generate SBOM (SPDX format for government compliance)
+        uses: anchore/sbom-action@v0
+        with:
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: true
+          upload-release-assets: false
+
       - name: "Upload artifacts (IMMUTABILITY: Build Once)"
         uses: actions/upload-artifact@v4
         with:
           name: "binaries-${{ github.sha }}"
-          path: dist/
+          path: |
+            dist/
+            sbom.*.json
           retention-days: 30
 
 
@@ -133,3 +187,34 @@ jobs:
           tags: storage-sage:test-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  notify:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: [validate, lint, test, build, docker]
+    if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Send email notification
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.MAIL_SERVER }}
+          server_port: ${{ secrets.MAIL_PORT || '587' }}
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "🚨 CI FAILED: storage-sage main branch"
+          to: ${{ secrets.MAIL_TO }}
+          from: StorageSage CI <${{ secrets.MAIL_FROM || secrets.MAIL_USERNAME }}>
+          body: |
+            CI Pipeline Failed for storage-sage (Government Security Software)
+
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+            Author: ${{ github.actor }}
+            Workflow: ${{ github.workflow }}
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Please investigate immediately.
+
+            ---
+            This is an automated security notification for government software compliance.

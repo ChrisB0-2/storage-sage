@@ -285,10 +285,44 @@ Before deploying to production:
 
 ## Compliance
 
+### Government Security Standards
+
+**StorageSage meets the following government security requirements:**
+
+#### Executive Order 14028 - Improving the Nation's Cybersecurity
+
+- ✅ **SBOM Generation**: Both Cycle DX and SPDX formats included with every release
+- ✅ **Secure Software Development**: Automated security scanning in CI/CD
+- ✅ **Supply Chain Security**: Dependency vulnerability scanning with govulncheck
+- ✅ **Vulnerability Disclosure**: GitHub Security Advisories for coordinated disclosure
+
+#### NIST SP 800-53 Rev. 5 Controls
+
+- **AC (Access Control)**: JWT authentication, least privilege, non-root execution
+- **AU (Audit and Accountability)**: Complete audit logging of all deletion operations
+- **CM (Configuration Management)**: Immutable build artifacts, reproducible builds
+- **IA (Identification and Authentication)**: TLS 1.2+ mutual authentication
+- **SC (System and Communications Protection)**: Encrypted communications, container isolation
+- **SI (System and Information Integrity)**: Continuous vulnerability scanning, SBOM tracking
+
+#### FIPS 140-2 Cryptography
+
+- Uses Go's `crypto/tls` package (FIPS 140-2 validated when compiled with appropriate build tags)
+- TLS 1.2+ with strong cipher suites
+- SHA256 for integrity verification
+- No deprecated cryptographic algorithms
+
+#### FISMA Compliance
+
+- **Categorization**: Moderate impact level (data integrity and availability)
+- **Security Controls**: NIST SP 800-53 baseline implemented
+- **Continuous Monitoring**: Automated vulnerability scanning, audit logging
+- **Incident Response**: Defined procedures with 4-hour CRITICAL response SLA
+
 ### Data Protection
 
 - **GDPR**: Audit logs may contain personal information (file paths)
-- **Data Retention**: Configure retention policies for audit logs
+- **Data Retention**: Configure retention policies for audit logs (default 90 days)
 - **Right to Erasure**: Implement procedures to purge audit logs
 - **Access Controls**: Restrict access to audit database
 
@@ -298,6 +332,19 @@ Before deploying to production:
 - Implement defense in depth
 - Principle of least privilege
 - Regular security audits
+
+### Continuous Compliance Monitoring
+
+The CI/CD pipeline automatically enforces:
+
+1. **Secrets Scanning** (gitleaks) - Prevents credential leaks
+2. **Dependency Vulnerabilities** (govulncheck) - NIST NVD integration
+3. **Security Linting** (gosec) - Go-specific security anti-patterns
+4. **Container Scanning** (Trivy) - OS and application vulnerabilities
+5. **Code Coverage** (80% minimum) - Quality assurance
+6. **SBOM Generation** - Supply chain transparency
+
+All scans integrate with GitHub Security tab for centralized visibility.
 
 ## Security Contacts
 

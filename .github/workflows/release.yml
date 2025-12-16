@@ -35,6 +35,8 @@ jobs:
           ls -lh dist/
           test -f dist/storage-sage || (echo "ERROR: storage-sage not found" && exit 1)
           test -f dist/storage-sage-query || (echo "ERROR: storage-sage-query not found" && exit 1)
+          test -f dist/sbom.cyclonedx.json || (echo "WARNING: SBOM (CycloneDX) not found" && exit 1)
+          test -f dist/sbom.spdx.json || (echo "WARNING: SBOM (SPDX) not found" && exit 1)
           chmod +x dist/storage-sage dist/storage-sage-query
 
       - name: Package binaries
@@ -105,6 +107,8 @@ jobs:
           files: |
             release/*.tar.gz
             release/checksums.txt
+            dist/sbom.cyclonedx.json
+            dist/sbom.spdx.json
           draft: false
           prerelease: false
           fail_on_unmatched_files: true

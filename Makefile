@@ -26,6 +26,16 @@ test: ## Run all tests (unit + integration)
 	@go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
 	@echo "✓ Tests passed"
 
+audit: ## Run security audits (govulncheck + gosec)
+	@echo "Running security audits..."
+	@echo "Checking for vulnerable dependencies..."
+	@which govulncheck > /dev/null || go install golang.org/x/vuln/cmd/govulncheck@latest
+	@govulncheck ./...
+	@echo "Running security linter..."
+	@which gosec > /dev/null || go install github.com/securego/gosec/v2/cmd/gosec@latest
+	@gosec -quiet ./...
+	@echo "✓ Security audit passed"
+
 build: ## Build daemon binary to dist/storage-sage
 	@echo "Building storage-sage daemon..."
 	@mkdir -p dist
