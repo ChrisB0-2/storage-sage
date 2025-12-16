@@ -33,13 +33,12 @@ jobs:
       # Download artifacts from workflow_run events (triggered after CI completes)
       - name: Download binary artifact (IMMUTABILITY - workflow_run)
         if: github.event_name == 'workflow_run'
-        uses: dawidd6/action-download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
-          workflow: ci.yml
           name: binaries-\${{ github.event.workflow_run.head_sha }}
           path: dist
-          run_id: \${{ github.event.workflow_run.id }}
-          if_no_artifact_found: fail
+          github-token: \${{ secrets.GITHUB_TOKEN }}
+          run-id: \${{ github.event.workflow_run.id }}
 
       # Download artifacts from tag push events
       - name: Download binary artifact (IMMUTABILITY - tag push)
