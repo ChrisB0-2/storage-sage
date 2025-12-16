@@ -34,12 +34,11 @@ jobs:
         uses: dawidd6/action-download-artifact@v3
         with:
           workflow: ci.yml
-          name: binaries-\${{ github.sha }}
+          name: binaries-\${{ github.event.workflow_run.head_sha || github.sha }}
           path: dist
-          # For workflow_run events
-          run_id: \${{ github.event.workflow_run.id }}
-          # For tag events, use the SHA from the tag
-          commit: \${{ github.sha }}
+          # Use run_id for workflow_run events, commit for tag push events
+          run_id: \${{ github.event.workflow_run.id || '' }}
+          commit: \${{ github.event_name == 'push' && github.sha || '' }}
           if_no_artifact_found: fail
 
       - name: Verify artifact exists
