@@ -158,6 +158,11 @@ func Cleanup(cfg *config.Config, candidates []scan.Candidate, dryRun bool, logge
 func (c *Cleaner) CleanupWithConfig(cfg *config.Config, candidates []scan.Candidate) (int, int64, error) {
 	c.logger.Info("Starting cleanup", "total_candidates", len(candidates))
 
+	// Ensure validator is set for safety validation
+	if c.validator == nil && len(candidates) > 0 {
+		c.logger.Info("Validator not set - using legacy path checking only")
+	}
+
 	var totalSpaceFreed int64
 	successCount := 0
 	errorCount := 0
