@@ -995,7 +995,9 @@ func TestDatabaseErrorHandling(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to create database: %v", err)
 		}
-		db.Close()
+		if err := db.Close(); err != nil {
+			t.Fatalf("Failed to close database: %v", err)
+		}
 
 		// Make database file read-only
 		err = os.Chmod(dbPath, 0444)
