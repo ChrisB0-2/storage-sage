@@ -175,10 +175,10 @@ func TestSymlinkEscapeDetection(t *testing.T) {
 	allowed := []string{allowedDir}
 
 	tests := []struct {
-		name          string
-		path          string
-		expectEscape  bool
-		expectError   bool
+		name         string
+		path         string
+		expectEscape bool
+		expectError  bool
 	}{
 		{"symlink escapes", symlinkPath, true, false},
 		{"symlink stays inside", safeSymlink, false, false},

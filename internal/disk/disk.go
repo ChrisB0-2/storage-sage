@@ -65,4 +65,3 @@ func IsNFSStale(path string, timeout time.Duration) bool {
 		return true
 	}
 }
-

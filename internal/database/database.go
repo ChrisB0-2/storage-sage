@@ -27,9 +27,9 @@ type DeletionRecord struct {
 	Size                    int64
 	DeletionReason          string
 	PrimaryReason           string
-	Mode                    string  // AGE, DISK, or STACK
-	Priority                *int    // Priority from path rule
-	AgeDays                 *int    // Actual age in days
+	Mode                    string // AGE, DISK, or STACK
+	Priority                *int   // Priority from path rule
+	AgeDays                 *int   // Actual age in days
 	AgeThresholdDays        *int
 	ActualAgeDays           *int
 	DiskThresholdPercent    *float64
@@ -306,4 +306,3 @@ func (d *DeletionDB) GetDatabaseStats() (map[string]interface{}, error) {
 
 	return stats, nil
 }
-

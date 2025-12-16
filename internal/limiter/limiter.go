@@ -51,4 +51,3 @@ func (l *CPULimiter) Throttle() {
 func (l *CPULimiter) SetMaxPercent(maxPercent float64) {
 	l.maxPercent = maxPercent
 }
-

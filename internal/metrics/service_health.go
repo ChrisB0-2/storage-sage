@@ -36,13 +36,13 @@ var (
 
 // HealthChecker manages periodic health checks for service components
 type HealthChecker struct {
-	mu               sync.RWMutex
-	startTime        time.Time
-	components       map[string]*ComponentHealth
-	checkInterval    time.Duration
-	stopCh           chan struct{}
-	wg               sync.WaitGroup
-	started          bool
+	mu            sync.RWMutex
+	startTime     time.Time
+	components    map[string]*ComponentHealth
+	checkInterval time.Duration
+	stopCh        chan struct{}
+	wg            sync.WaitGroup
+	started       bool
 }
 
 // ComponentHealth represents health status of a single component

@@ -8,11 +8,11 @@ import (
 )
 
 var (
-	ErrInvalidPath   = errors.New("invalid path")
-	ErrProtectedPath = errors.New("protected path")
+	ErrInvalidPath    = errors.New("invalid path")
+	ErrProtectedPath  = errors.New("protected path")
 	ErrOutsideAllowed = errors.New("outside allowed roots")
-	ErrTraversal     = errors.New("path traversal detected")
-	ErrSymlinkEscape = errors.New("symlink escape detected")
+	ErrTraversal      = errors.New("path traversal detected")
+	ErrSymlinkEscape  = errors.New("symlink escape detected")
 )
 
 // Validator enforces the safety contract for all delete operations
