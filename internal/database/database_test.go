@@ -19,7 +19,11 @@ func TestDatabaseCreation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Failed to close database: %v", err)
+		}
+	}()
 
 	// Verify database file exists
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
@@ -56,7 +60,11 @@ func TestWALModeEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Failed to close database: %v", err)
+		}
+	}()
 
 	// Query journal mode
 	var journalMode string
@@ -90,7 +98,11 @@ func TestSchemaCreation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Failed to close database: %v", err)
+		}
+	}()
 
 	// Verify deletions table exists
 	var tableName string
@@ -143,7 +155,11 @@ func TestRecordDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Failed to close database: %v", err)
+		}
+	}()
 
 	now := time.Now()
 	candidate := scan.Candidate{
@@ -199,7 +215,11 @@ func TestRecordAllFieldTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Failed to close database: %v", err)
+		}
+	}()
 
 	tests := []struct {
 		name      string
@@ -336,7 +356,11 @@ func TestQueryMethods(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Failed to close database: %v", err)
+		}
+	}()
 
 	// Insert test data
 	now := time.Now()
@@ -502,7 +526,11 @@ func TestPaginationMethods(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Failed to close database: %v", err)
+		}
+	}()
 
 	// Insert 25 test records
 	for i := 0; i < 25; i++ {
@@ -565,7 +593,11 @@ func TestConcurrentReads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Failed to close database: %v", err)
+		}
+	}()
 
 	// Insert test data
 	for i := 0; i < 100; i++ {
@@ -619,7 +651,11 @@ func TestConcurrentReadWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Failed to close database: %v", err)
+		}
+	}()
 
 	var wg sync.WaitGroup
 	errors := make(chan error, 20)
@@ -680,7 +716,11 @@ func TestDatabaseStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Failed to close database: %v", err)
+		}
+	}()
 
 	// Insert test data
 	for i := 0; i < 50; i++ {
@@ -750,7 +790,11 @@ func TestVacuum(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Failed to close database: %v", err)
+		}
+	}()
 
 	// Insert and delete data to create fragmentation
 	for i := 0; i < 100; i++ {
@@ -802,7 +846,11 @@ func TestIndexUtilization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Failed to close database: %v", err)
+		}
+	}()
 
 	// Insert test data
 	for i := 0; i < 1000; i++ {
@@ -848,7 +896,11 @@ func TestIndexUtilization(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Query failed: %v", err)
 			}
-			defer rows.Close()
+			defer func() {
+				if err := rows.Close(); err != nil {
+					t.Errorf("Failed to close rows: %v", err)
+				}
+			}()
 
 			// Just verify the query plan can be retrieved
 			// Detailed plan analysis would be complex
@@ -880,7 +932,11 @@ func TestBulkInsertPerformance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Failed to close database: %v", err)
+		}
+	}()
 
 	count := 10000
 	start := time.Now()
@@ -955,7 +1011,11 @@ func TestDatabaseErrorHandling(t *testing.T) {
 			t.Logf("Cannot open read-only database: %v", err)
 			return
 		}
-		defer db.Close()
+		defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Failed to close database: %v", err)
+		}
+	}()
 
 		// Try to insert (should fail)
 		candidate := scan.Candidate{
@@ -980,7 +1040,11 @@ func TestNullFieldHandling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Failed to close database: %v", err)
+		}
+	}()
 
 	// Insert record with minimal fields (many nulls)
 	candidate := scan.Candidate{
