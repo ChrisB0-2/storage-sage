@@ -8,9 +8,15 @@ import (
 
 	"storage-sage/internal/config"
 	"storage-sage/internal/fsops"
+	"storage-sage/internal/metrics"
 	"storage-sage/internal/safety"
 	"storage-sage/internal/scan"
 )
+
+func init() {
+	// Initialize metrics once for all tests
+	metrics.Init()
+}
 
 // TestDryRunNeverDeletes proves the dry-run contract:
 // When dryRun=true, ZERO delete syscalls must occur
