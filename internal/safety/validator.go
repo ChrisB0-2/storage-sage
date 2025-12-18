@@ -138,7 +138,7 @@ func hasPathPrefix(path, prefix string) bool {
 	prefix = filepath.Clean(prefix)
 
 	if prefix == string(os.PathSeparator) {
-		return true
+		return path == "/"
 	}
 	if path == prefix {
 		return true
