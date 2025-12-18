@@ -1,0 +1,44 @@
+# Runtime-only Dockerfile for storage-sage daemon
+# This Dockerfile expects pre-built binaries in dist/ (built by CI)
+# Part of "Build Once, Deploy Many" pattern
+
+FROM alpine:3.19
+
+# Install runtime dependencies including sqlite
+RUN apk add --no-cache \
+    ca-certificates \
+    tzdata \
+    sqlite \
+    sqlite-libs
+
+# Create non-root user and group
+RUN addgroup -g 1000 -S storagesage && \
+    adduser -u 1000 -S storagesage -G storagesage
+
+# Create necessary directories with proper ownership
+RUN mkdir -p /app/config /app/logs /app/data && \
+    chown -R storagesage:storagesage /app
+
+# Copy pre-built binary from dist/ (created by build job)
+COPY dist/storage-sage /app/storage-sage
+RUN chown storagesage:storagesage /app/storage-sage && \
+    chmod +x /app/storage-sage
+
+# Set working directory
+WORKDIR /app
+
+# Switch to non-root user
+USER storagesage
+
+# Expose Prometheus metrics port (default 9090)
+EXPOSE 9090
+
+# Health check - verify binary exists and is executable
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD test -x /app/storage-sage || exit 1
+
+# Run the storage-sage daemon
+# Default config path: /etc/storage-sage/config.yaml
+# Override with: docker run ... storage-sage -config /path/to/config.yaml
+ENTRYPOINT ["/app/storage-sage"]
+CMD ["-config", "/etc/storage-sage/config.yaml"]
