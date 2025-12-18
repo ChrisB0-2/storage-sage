@@ -178,10 +178,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: "binaries-${{ github.sha }}"
-          path: dist/
+          path: .
 
       - name: Verify artifacts downloaded
         run: |
+          echo "Contents of current directory:"
+          ls -lah
           echo "Contents of dist/ directory:"
           ls -lah dist/
           echo "Verifying binary exists:"
