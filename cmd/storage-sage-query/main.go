@@ -184,8 +184,8 @@ func printRecords(records []database.DeletionRecord) {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tTimestamp\tAction\tReason\tSize\tPath")
-	fmt.Fprintln(w, "--\t---------\t------\t------\t----\t----")
+	_, _ = fmt.Fprintln(w, "ID\tTimestamp\tAction\tReason\tSize\tPath")
+	_, _ = fmt.Fprintln(w, "--\t---------\t------\t------\t----\t----")
 
 	for _, r := range records {
 		timestamp := r.Timestamp.Format("2006-01-02 15:04:05")
@@ -194,10 +194,10 @@ func printRecords(records []database.DeletionRecord) {
 		if r.FileName != "" {
 			fullPath = fullPath + "/" + r.FileName
 		}
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n",
 			r.ID, timestamp, r.Action, r.PrimaryReason, size, fullPath)
 	}
-	w.Flush()
+	_ = w.Flush()
 }
 
 func formatBytes(bytes int64) string {
