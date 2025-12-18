@@ -180,6 +180,19 @@ jobs:
           name: "binaries-${{ github.sha }}"
           path: dist/
 
+      - name: Verify artifacts downloaded
+        run: |
+          echo "Contents of dist/ directory:"
+          ls -lah dist/
+          echo "Verifying binary exists:"
+          test -f dist/storage-sage && echo "✓ dist/storage-sage found" || echo "✗ dist/storage-sage NOT found"
+
+      - name: Prepare Docker build context
+        run: |
+          # Copy binary to cmd/storage-sage/ to include in build context
+          cp -v dist/storage-sage cmd/storage-sage/
+          chmod +x cmd/storage-sage/storage-sage
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -203,7 +216,7 @@ jobs:
       - name: Build Docker image (from artifact, no rebuild)
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./cmd/storage-sage
           file: ./cmd/storage-sage/Dockerfile.runtime
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           tags: ${{ steps.meta.outputs.tags }}

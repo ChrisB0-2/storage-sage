@@ -19,8 +19,8 @@ RUN addgroup -g 1000 -S storagesage && \
 RUN mkdir -p /app/config /app/logs /app/data && \
     chown -R storagesage:storagesage /app
 
-# Copy pre-built binary from dist/ (created by build job)
-COPY dist/storage-sage /app/storage-sage
+# Copy pre-built binary (created by build job, copied to context by CI)
+COPY storage-sage /app/storage-sage
 RUN chown storagesage:storagesage /app/storage-sage && \
     chmod +x /app/storage-sage
 
