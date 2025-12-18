@@ -111,7 +111,11 @@ func DetectSymlinkEscape(cleanAbs string, allowedRoots []string) (bool, error) {
 		return false, err
 	}
 	resolved = filepath.Clean(resolved)
-	return !IsWithinAllowedRoots(resolved, allowedRoots), nil
+	// Only flag as escape if the resolved path is outside allowed roots.
+	if !IsWithinAllowedRoots(resolved, allowedRoots) {
+		return true, nil
+	}
+	return false, nil
 }
 
 // IsProtectedPath checks if path matches protected system paths
