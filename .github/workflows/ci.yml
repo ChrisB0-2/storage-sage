@@ -214,7 +214,7 @@ jobs:
             type=sha,prefix=sha-
 
       - name: Build Docker image (from artifact, no rebuild)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./cmd/storage-sage
           file: ./cmd/storage-sage/Dockerfile.runtime
