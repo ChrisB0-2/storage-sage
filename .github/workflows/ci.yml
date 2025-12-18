@@ -84,7 +84,7 @@ jobs:
     needs: [validate]
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]  # Linux-only testing for server deployment
         go: ['1.24.11']  # Using single version matching toolchain
     steps:
       - name: Checkout code
