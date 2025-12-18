@@ -8,9 +8,15 @@ import (
 
 	"storage-sage/internal/cleanup"
 	"storage-sage/internal/config"
+	"storage-sage/internal/metrics"
 	"storage-sage/internal/safety"
 	"storage-sage/internal/scan"
 )
+
+func init() {
+	// Initialize metrics once for all integration tests
+	metrics.Init()
+}
 
 // TestCleanupSafetyIntegration verifies complete safety contract with real filesystem
 // This is the integration test required by the specification

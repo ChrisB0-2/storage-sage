@@ -20,6 +20,13 @@ func TestMetricsInit(t *testing.T) {
 	Init()
 	Init()
 
+	// Initialize Vec metrics with dummy labels so they appear in Gather()
+	// This is necessary because CounterVec/GaugeVec don't show up until they have label values
+	PathBytesDeletedTotal.WithLabelValues("/test").Add(0)
+	FreeSpacePercent.WithLabelValues("/test").Set(0)
+	HTTPRequestDuration.WithLabelValues("test", "GET", "200").Observe(0)
+	HTTPRequestsTotal.WithLabelValues("test", "GET", "200").Add(0)
+
 	// Verify metrics are non-nil (successfully created)
 	if CleanupDuration == nil {
 		t.Error("CleanupDuration should be initialized")

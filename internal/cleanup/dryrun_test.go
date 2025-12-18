@@ -174,3 +174,31 @@ func TestSafetyValidatorBlocksDeletion(t *testing.T) {
 		t.Errorf("Expected 0 successful deletions (blocked by validator), got %d", count)
 	}
 }
+
+// TestCleanerWithNilMetrics ensures Cleaner works safely when metrics package is not initialized
+// This is a regression test for the SIGSEGV bug where cleanupMetrics methods returned nil counters
+func TestCleanerWithNilMetrics(t *testing.T) {
+	// Create a Cleaner with nil metrics (simulating uninitialized metrics package)
+	cleaner := &Cleaner{
+		logger:    &cleanupStdLogger{Logger: log.Default()},
+		metrics:   nil, // Explicitly nil to test defensive code
+		dryRun:    true,
+		validator: safety.NewValidator([]string{"/tmp"}, nil),
+		deleter:   &fsops.FakeDeleter{},
+	}
+
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		ScanPaths: []string{tmpDir},
+	}
+
+	candidates := []scan.Candidate{
+		{Path: filepath.Join(tmpDir, "test.txt"), Size: 100, IsDir: false},
+	}
+
+	// This should NOT panic even with nil metrics
+	_, _, err := cleaner.CleanupWithConfig(cfg, candidates)
+	if err != nil {
+		t.Fatalf("CleanupWithConfig should work with nil metrics, got error: %v", err)
+	}
+}

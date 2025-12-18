@@ -30,7 +30,7 @@ var (
 // initDaemonMetrics initializes all daemon subsystem metrics
 func initDaemonMetrics() {
 	ErrorsTotal = NewCounter(
-		"storagesage_errors_total",
+		"storagesage_daemon_errors_total",
 		"Total number of errors encountered by StorageSage.",
 	)
 

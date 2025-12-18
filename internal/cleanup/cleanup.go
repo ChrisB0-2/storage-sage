@@ -106,6 +106,36 @@ func (c *Cleaner) SetDeleter(d fsops.Deleter) {
 	c.deleter = d
 }
 
+// incrementErrorsTotal safely increments the errors metric if metrics are initialized
+func (c *Cleaner) incrementErrorsTotal() {
+	if c.metrics != nil {
+		counter := c.metrics.ErrorsTotal()
+		if counter != nil {
+			counter.Inc()
+		}
+	}
+}
+
+// incrementFilesProcessed safely increments the files processed metric if metrics are initialized
+func (c *Cleaner) incrementFilesProcessed() {
+	if c.metrics != nil {
+		counter := c.metrics.FilesProcessedTotal()
+		if counter != nil {
+			counter.Inc()
+		}
+	}
+}
+
+// addSpaceFreed safely adds to the space freed metric if metrics are initialized
+func (c *Cleaner) addSpaceFreed(bytes int64) {
+	if c.metrics != nil {
+		counter := c.metrics.SpaceFreedBytes()
+		if counter != nil {
+			counter.Add(float64(bytes))
+		}
+	}
+}
+
 func withinAllowed(path string, cfg *config.Config) bool {
 	if cfg == nil {
 		return false
@@ -176,7 +206,7 @@ func (c *Cleaner) CleanupWithConfig(cfg *config.Config, candidates []scan.Candid
 				if c.db != nil {
 					_ = c.db.RecordDeletion("SKIP", cand, "safety_violation: "+err.Error())
 				}
-				c.metrics.ErrorsTotal().Inc()
+				c.incrementErrorsTotal()
 				errorCount++
 				continue
 			}
@@ -187,7 +217,7 @@ func (c *Cleaner) CleanupWithConfig(cfg *config.Config, candidates []scan.Candid
 				if c.db != nil {
 					_ = c.db.RecordDeletion("SKIP", cand, "unsafe_path")
 				}
-				c.metrics.ErrorsTotal().Inc()
+				c.incrementErrorsTotal()
 				errorCount++
 				continue
 			}
@@ -201,7 +231,7 @@ func (c *Cleaner) CleanupWithConfig(cfg *config.Config, candidates []scan.Candid
 				if c.db != nil {
 					_ = c.db.RecordDeletion("SKIP", cand, "nfs_stale")
 				}
-				c.metrics.ErrorsTotal().Inc()
+				c.incrementErrorsTotal()
 				errorCount++
 				continue
 			}
@@ -269,7 +299,7 @@ func (c *Cleaner) CleanupWithConfig(cfg *config.Config, candidates []scan.Candid
 				if c.db != nil {
 					_ = c.db.RecordDeletion("SKIP", cand, "nfs_stale_during_delete")
 				}
-				c.metrics.ErrorsTotal().Inc()
+				c.incrementErrorsTotal()
 				errorCount++
 				continue
 			}
@@ -290,7 +320,7 @@ func (c *Cleaner) CleanupWithConfig(cfg *config.Config, candidates []scan.Candid
 					c.logger.Error("Failed to record error to database", "error", dbErr)
 				}
 			}
-			c.metrics.ErrorsTotal().Inc()
+			c.incrementErrorsTotal()
 			errorCount++
 			continue
 		}
@@ -315,8 +345,8 @@ func (c *Cleaner) CleanupWithConfig(cfg *config.Config, candidates []scan.Candid
 		successCount++
 
 		// Update Prometheus metrics
-		c.metrics.FilesProcessedTotal().Inc()
-		c.metrics.SpaceFreedBytes().Add(float64(cand.Size))
+		c.incrementFilesProcessed()
+		c.addSpaceFreed(cand.Size)
 
 		// Record path-specific deletion metrics (Section 7.2)
 		metrics.RecordPathDeletion(cand.Path, cand.Size)

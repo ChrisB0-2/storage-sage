@@ -133,7 +133,9 @@ func RecordCleanupRun() {
 
 // RecordPathDeletion records bytes deleted for a specific path
 func RecordPathDeletion(path string, bytes int64) {
-	PathBytesDeletedTotal.WithLabelValues(path).Add(float64(bytes))
+	if PathBytesDeletedTotal != nil {
+		PathBytesDeletedTotal.WithLabelValues(path).Add(float64(bytes))
+	}
 }
 
 // Worker pool metric helpers (beerus-inspired)

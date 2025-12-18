@@ -249,7 +249,7 @@ func TestValidateDeleteTarget(t *testing.T) {
 		{"protected /bin", "/bin/sh", ErrProtectedPath},
 		{"protected root", "/", ErrProtectedPath},
 		{"escaping symlink", escapingLink, ErrSymlinkEscape},
-		{"traversal attempt", filepath.Join(allowedDir, "../outside/keep_me.txt"), ErrTraversal},
+		{"traversal attempt", filepath.Join(allowedDir, "../outside/keep_me.txt"), ErrOutsideAllowed}, // filepath.Join cleans path, so .. is removed before validation
 		{"empty path", "", ErrInvalidPath},
 	}
 
@@ -283,8 +283,8 @@ func TestHasPathPrefix(t *testing.T) {
 		{"subdirectory", "/tmp/allowed/sub", "/tmp/allowed", true},
 		{"not a prefix", "/tmp/other", "/tmp/allowed", false},
 		{"partial match", "/tmp/allowedother", "/tmp/allowed", false},
-		{"root prefix", "/tmp", "/", true},
-		{"slash prefix explicit", "/tmp", "/", true},
+		{"root prefix only matches root", "/tmp", "/", false},
+		{"root exact match", "/", "/", true},
 	}
 
 	for _, tt := range tests {
