@@ -3,9 +3,9 @@
 # =============================================================================
 # Binaries and Build Artifacts
 # =============================================================================
-# Compiled binaries
-storage-sage
-storage-sage-query
+# Compiled binaries (only in root, not cmd/ directories)
+/storage-sage
+/storage-sage-query
 *.exe
 *.exe~
 *.dll

@@ -95,6 +95,10 @@ func RunOnceWithDB(ctx context.Context, cfg *config.Config, dryRun bool, logger 
 }
 
 func Run(ctx context.Context, cfg *config.Config, dryRun bool, logger *log.Logger) error {
+	return RunWithDB(ctx, cfg, dryRun, logger, nil)
+}
+
+func RunWithDB(ctx context.Context, cfg *config.Config, dryRun bool, logger *log.Logger, db *database.DeletionDB) error {
 	if logger == nil {
 		logger = log.Default()
 	}
@@ -102,7 +106,7 @@ func Run(ctx context.Context, cfg *config.Config, dryRun bool, logger *log.Logge
 		return errors.New("nil config")
 	}
 
-	if err := RunOnce(ctx, cfg, dryRun, logger); err != nil {
+	if err := RunOnceWithDB(ctx, cfg, dryRun, logger, db); err != nil {
 		return err
 	}
 
@@ -115,7 +119,7 @@ func Run(ctx context.Context, cfg *config.Config, dryRun bool, logger *log.Logge
 			logger.Println("scheduler shutting down")
 			return ctx.Err()
 		case <-ticker.C:
-			if err := RunOnce(ctx, cfg, dryRun, logger); err != nil {
+			if err := RunOnceWithDB(ctx, cfg, dryRun, logger, db); err != nil {
 				logger.Printf("error running cycle: %v", err)
 			}
 		}
