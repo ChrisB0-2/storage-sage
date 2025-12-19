@@ -276,10 +276,10 @@ jobs:
       - name: Start backend service (without dependencies)
         run: |
           # Start only the backend, skipping dependency checks
+          # Use host network so we can access via localhost
           docker run -d \
             --name storage-sage-backend \
-            --network bridge \
-            -p 8443:8443 \
+            --network host \
             -v "$(pwd)/web/certs:/app/certs:ro" \
             -v "$(pwd)/secrets/jwt_secret.txt:/run/secrets/jwt_secret:ro" \
             -e JWT_SECRET_FILE=/run/secrets/jwt_secret \
