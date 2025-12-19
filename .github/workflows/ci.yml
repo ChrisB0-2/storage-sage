@@ -230,6 +230,9 @@ jobs:
     name: Runtime UI Verification
     runs-on: ubuntu-latest
     needs: [build]
+    env:
+      BACKEND_PORT: 8443
+      BASE_URL: https://127.0.0.1:8443
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -243,7 +246,7 @@ jobs:
         run: |
           cp .env.example .env || true
           echo "JWT_SECRET=test-jwt-secret-for-ci-only" >> .env
-          echo "BACKEND_PORT=8443" >> .env
+          echo "BACKEND_PORT=${BACKEND_PORT}" >> .env
           echo "DAEMON_METRICS_PORT=9090" >> .env
 
       - name: Generate self-signed certificates
@@ -276,7 +279,7 @@ jobs:
       - name: Start backend service (without dependencies)
         run: |
           # Start only the backend, skipping dependency checks
-          # Use host network so we can access via localhost
+          # Use host network so we can access via 127.0.0.1
           docker run -d \
             --name storage-sage-backend \
             --network host \
@@ -286,20 +289,60 @@ jobs:
             -e JWT_EXPIRY=24h \
             storage-sage:backend-latest
 
-      - name: Wait for services to be healthy
+          echo "Backend container started"
+          echo "Waiting 3 seconds for container to initialize..."
+          sleep 3
+
+          # Verify container is running
+          if ! docker ps | grep -q storage-sage-backend; then
+            echo "❌ ERROR: Container failed to start or exited immediately"
+            echo ""
+            echo "=== Container Status ==="
+            docker ps -a | grep storage-sage-backend || true
+            echo ""
+            echo "=== Container Logs ==="
+            docker logs storage-sage-backend 2>&1 || true
+            exit 1
+          fi
+          echo "✓ Container is running"
+
+      - name: Wait for backend to be ready
         run: |
-          echo "Waiting for backend to start..."
+          echo "Waiting for HTTPS server to be ready at ${BASE_URL}..."
+
           for i in {1..30}; do
-            if docker ps | grep storage-sage-backend | grep -q "Up"; then
-              echo "✓ Backend container is up"
+            # Try to connect to the health endpoint
+            HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" --connect-timeout 2 --max-time 5 "${BASE_URL}/api/v1/health" 2>/dev/null || echo "000")
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✓ Backend is ready and responding (HTTP $HTTP_CODE)"
               break
             fi
-            echo "Waiting... ($i/30)"
-            sleep 2
-          done
 
-          # Additional wait for service to be ready
-          sleep 10
+            echo "Attempt $i/30: HTTP $HTTP_CODE (waiting for 200...)"
+            sleep 2
+
+            if [ $i -eq 30 ]; then
+              echo ""
+              echo "❌ Backend failed to become ready within 60 seconds"
+              echo ""
+              echo "=== DIAGNOSTICS ==="
+              echo ""
+              echo "--- Container Status ---"
+              docker ps -a | grep storage-sage-backend || true
+              echo ""
+              echo "--- Port Listening Check ---"
+              docker exec storage-sage-backend netstat -tlnp 2>/dev/null || docker exec storage-sage-backend ss -tlnp 2>/dev/null || echo "netstat/ss not available"
+              echo ""
+              echo "--- Backend Logs ---"
+              docker logs storage-sage-backend 2>&1 | tail -100
+              echo ""
+              echo "--- Last curl attempt (verbose) ---"
+              curl -vk "${BASE_URL}/api/v1/health" 2>&1 || true
+              echo ""
+              exit 1
+            fi
+          done
 
       - name: Show container logs for debugging
         if: always()
@@ -310,11 +353,21 @@ jobs:
       - name: "Runtime Check 1: Root path (/) returns 200"
         run: |
           echo "Testing GET /"
-          HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" https://localhost:8443/ || echo "000")
+          HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" "${BASE_URL}/" 2>/dev/null || echo "000")
           echo "Response code: $HTTP_CODE"
           if [ "$HTTP_CODE" != "200" ]; then
             echo "❌ FAIL: GET / returned $HTTP_CODE instead of 200"
             echo "This means frontend is not being served!"
+            echo ""
+            echo "=== DIAGNOSTICS ==="
+            echo "--- Backend Logs (last 50 lines) ---"
+            docker logs storage-sage-backend 2>&1 | tail -50
+            echo ""
+            echo "--- Verbose curl output ---"
+            curl -vk "${BASE_URL}/" 2>&1 | head -50
+            echo ""
+            echo "--- Listening ports ---"
+            docker exec storage-sage-backend ss -tlnp 2>/dev/null || echo "ss not available"
             exit 1
           fi
           echo "✅ PASS: GET / returns 200"
@@ -322,10 +375,13 @@ jobs:
       - name: "Runtime Check 2: index.html returns 200"
         run: |
           echo "Testing GET /index.html"
-          HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" https://localhost:8443/index.html || echo "000")
+          HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" "${BASE_URL}/index.html" 2>/dev/null || echo "000")
           echo "Response code: $HTTP_CODE"
           if [ "$HTTP_CODE" != "200" ]; then
             echo "❌ FAIL: GET /index.html returned $HTTP_CODE instead of 200"
+            echo ""
+            echo "=== DIAGNOSTICS ==="
+            docker logs storage-sage-backend 2>&1 | tail -30
             exit 1
           fi
           echo "✅ PASS: GET /index.html returns 200"
@@ -333,7 +389,7 @@ jobs:
       - name: "Runtime Check 3: Client route (/settings) returns 200 (SPA fallback)"
         run: |
           echo "Testing GET /settings (client-side route)"
-          HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" https://localhost:8443/settings || echo "000")
+          HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" "${BASE_URL}/settings" 2>/dev/null || echo "000")
           echo "Response code: $HTTP_CODE"
           if [ "$HTTP_CODE" != "200" ]; then
             echo "❌ FAIL: GET /settings returned $HTTP_CODE instead of 200"
@@ -345,7 +401,7 @@ jobs:
       - name: "Runtime Check 4: API health endpoint returns 200"
         run: |
           echo "Testing GET /api/v1/health"
-          HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" https://localhost:8443/api/v1/health || echo "000")
+          HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" "${BASE_URL}/api/v1/health" 2>/dev/null || echo "000")
           echo "Response code: $HTTP_CODE"
           if [ "$HTTP_CODE" != "200" ]; then
             echo "❌ FAIL: GET /api/v1/health returned $HTTP_CODE instead of 200"
@@ -356,7 +412,7 @@ jobs:
       - name: "Runtime Check 5: Verify index.html contains React root"
         run: |
           echo "Verifying index.html content"
-          CONTENT=$(curl -k -s https://localhost:8443/index.html)
+          CONTENT=$(curl -k -s "${BASE_URL}/index.html" 2>/dev/null)
           if echo "$CONTENT" | grep -q "root"; then
             echo "✅ PASS: index.html contains 'root' element"
           else
