@@ -124,24 +124,22 @@ func main() {
 	// WebSocket endpoint for live metrics
 	protected.HandleFunc("/ws/metrics", websocket.HandleMetricsWebSocket(hub)).Methods("GET")
 
-	// Serve frontend static files (React build output)
-	// Check multiple possible locations: prioritize frontend-v2, fallback to frontend
-	frontendPath := "frontend-v2/dist"
+	// Serve frontend static files (React/Vite build output)
+	// Priority order: /app/frontend/dist (container), frontend/dist (local), ../frontend/dist (local)
+	frontendPath := "/app/frontend/dist"
 	if _, err := os.Stat(frontendPath); os.IsNotExist(err) {
-		frontendPath = "../frontend-v2/dist"
+		frontendPath = "frontend/dist"
 		if _, err := os.Stat(frontendPath); os.IsNotExist(err) {
-			frontendPath = "frontend/dist"
+			frontendPath = "../frontend/dist"
 			if _, err := os.Stat(frontendPath); os.IsNotExist(err) {
-				frontendPath = "../frontend/dist"
-				if _, err := os.Stat(frontendPath); os.IsNotExist(err) {
-					frontendPath = "frontend/build"
-					if _, err := os.Stat(frontendPath); os.IsNotExist(err) {
-						frontendPath = "../frontend/build"
-					}
-				}
+				logger.Printf("WARNING: Frontend dist not found in any expected location. UI will not work!")
+				logger.Printf("  Tried: /app/frontend/dist, frontend/dist, ../frontend/dist")
+				logger.Printf("  Please build frontend with: cd web/frontend && npm install && npm run build")
 			}
 		}
 	}
+
+	logger.Printf("Serving frontend from: %s", frontendPath)
 	// Serve static files and handle React Router client-side routing
 	fs := http.FileServer(http.Dir(frontendPath))
 	router.PathPrefix("/").Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

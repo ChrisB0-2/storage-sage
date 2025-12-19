@@ -226,10 +226,145 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  runtime-verification:
+    name: Runtime UI Verification
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create secrets directory
+        run: |
+          mkdir -p secrets
+          echo "test-jwt-secret-for-ci-only" > secrets/jwt_secret.txt
+
+      - name: Create .env file
+        run: |
+          cp .env.example .env || true
+          echo "JWT_SECRET=test-jwt-secret-for-ci-only" >> .env
+          echo "BACKEND_PORT=8443" >> .env
+          echo "DAEMON_METRICS_PORT=9090" >> .env
+
+      - name: Generate self-signed certificates
+        run: |
+          mkdir -p web/certs
+          openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
+            -keyout web/certs/server.key \
+            -out web/certs/server.crt \
+            -subj "/CN=localhost"
+          chmod 600 web/certs/server.key
+          chmod 644 web/certs/server.crt
+
+      - name: Create default config
+        run: |
+          mkdir -p web/config
+          cat > web/config/config.yaml <<EOF
+          scanPaths:
+            - /tmp/test
+          ageOffDays: 7
+          minFreePercent: 10
+          intervalMinutes: 15
+          prometheus:
+            port: 9090
+          EOF
+
+      - name: Build and start services
+        run: |
+          docker compose build storage-sage-backend storage-sage-daemon
+          docker compose up -d storage-sage-backend storage-sage-daemon
+
+      - name: Wait for services to be healthy
+        run: |
+          echo "Waiting for backend to start..."
+          for i in {1..30}; do
+            if docker compose ps | grep storage-sage-backend | grep -q "Up"; then
+              echo "✓ Backend container is up"
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 2
+          done
+
+          # Additional wait for service to be ready
+          sleep 10
+
+      - name: Show container logs for debugging
+        if: always()
+        run: |
+          echo "=== Backend logs ==="
+          docker compose logs storage-sage-backend || true
+          echo "=== Daemon logs ==="
+          docker compose logs storage-sage-daemon || true
+
+      - name: "Runtime Check 1: Root path (/) returns 200"
+        run: |
+          echo "Testing GET /"
+          HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" https://localhost:8443/ || echo "000")
+          echo "Response code: $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ FAIL: GET / returned $HTTP_CODE instead of 200"
+            echo "This means frontend is not being served!"
+            exit 1
+          fi
+          echo "✅ PASS: GET / returns 200"
+
+      - name: "Runtime Check 2: index.html returns 200"
+        run: |
+          echo "Testing GET /index.html"
+          HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" https://localhost:8443/index.html || echo "000")
+          echo "Response code: $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ FAIL: GET /index.html returned $HTTP_CODE instead of 200"
+            exit 1
+          fi
+          echo "✅ PASS: GET /index.html returns 200"
+
+      - name: "Runtime Check 3: Client route (/settings) returns 200 (SPA fallback)"
+        run: |
+          echo "Testing GET /settings (client-side route)"
+          HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" https://localhost:8443/settings || echo "000")
+          echo "Response code: $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ FAIL: GET /settings returned $HTTP_CODE instead of 200"
+            echo "This means SPA fallback is not working!"
+            exit 1
+          fi
+          echo "✅ PASS: GET /settings returns 200 (SPA fallback works)"
+
+      - name: "Runtime Check 4: API health endpoint returns 200"
+        run: |
+          echo "Testing GET /api/v1/health"
+          HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" https://localhost:8443/api/v1/health || echo "000")
+          echo "Response code: $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ FAIL: GET /api/v1/health returned $HTTP_CODE instead of 200"
+            exit 1
+          fi
+          echo "✅ PASS: GET /api/v1/health returns 200"
+
+      - name: "Runtime Check 5: Verify index.html contains React root"
+        run: |
+          echo "Verifying index.html content"
+          CONTENT=$(curl -k -s https://localhost:8443/index.html)
+          if echo "$CONTENT" | grep -q "root"; then
+            echo "✅ PASS: index.html contains 'root' element"
+          else
+            echo "❌ FAIL: index.html doesn't contain expected React root element"
+            echo "Content received:"
+            echo "$CONTENT"
+            exit 1
+          fi
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker compose down -v
+
   notify:
     name: Notify on Failure
     runs-on: ubuntu-latest
-    needs: [validate, lint, test, build, docker]
+    needs: [validate, lint, test, build, docker, runtime-verification]
     if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Send email notification

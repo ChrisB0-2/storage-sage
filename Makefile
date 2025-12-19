@@ -44,6 +44,17 @@ build: ## Build daemon binary to dist/storage-sage
 	@echo "✓ Build complete: dist/storage-sage"
 	@ls -lh dist/
 
+build-frontend: ## Build frontend assets (Vite)
+	@echo "Building frontend..."
+	@cd web/frontend && \
+		if [ ! -d "node_modules" ]; then \
+			echo "Installing frontend dependencies..."; \
+			npm install; \
+		fi && \
+		npm run build
+	@echo "✓ Frontend build complete: web/frontend/dist/"
+	@ls -lh web/frontend/dist/ | head -10
+
 # ============================================================================
 # Docker Management Targets
 # ============================================================================
@@ -117,7 +128,8 @@ verify: ## Verify environment setup
 generate-override: ## Generate docker-compose.override.yml based on .env
 	@./scripts/generate-compose-override.sh
 
-build-docker: validate-env ## Build all Docker containers
+build-docker: validate-env ## Build all Docker containers (includes frontend build in multi-stage)
+	@echo "Building Docker containers (multi-stage builds include frontend)..."
 	docker compose build
 
 up: validate-env generate-override setup-permissions ## Start all services
@@ -140,6 +152,11 @@ start: setup build-docker up ## Complete setup and start (production-ready singl
 	@echo "Check status: make ps"
 	@echo "View logs:    make logs"
 	@echo "Health check: make health"
+
+dev-frontend: build-frontend ## Build frontend for local development
+	@echo "✓ Frontend ready for local development"
+	@echo "  Run backend with: cd web/backend && go run ."
+	@echo "  Or use: make start"
 
 down: ## Stop all services
 	docker compose down --remove-orphans
