@@ -141,23 +141,24 @@ func main() {
 
 	logger.Printf("Serving frontend from: %s", frontendPath)
 	// Serve static files and handle React Router client-side routing
-	fs := http.FileServer(http.Dir(frontendPath))
 	router.PathPrefix("/").Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Don't interfere with API routes
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			http.NotFound(w, r)
 			return
 		}
+		// Clean the path to prevent directory traversal
+		path := filepath.Clean(r.URL.Path)
 		// Check if file exists
-		filePath := filepath.Join(frontendPath, r.URL.Path)
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			// File doesn't exist, serve index.html for client-side routing
-			indexPath := filepath.Join(frontendPath, "index.html")
-			http.ServeFile(w, r, indexPath)
+		filePath := filepath.Join(frontendPath, path)
+		if fileInfo, err := os.Stat(filePath); err == nil && !fileInfo.IsDir() {
+			// File exists and is not a directory, serve it directly
+			http.ServeFile(w, r, filePath)
 			return
 		}
-		// File exists, serve it
-		fs.ServeHTTP(w, r)
+		// File doesn't exist or is a directory, serve index.html for client-side routing
+		indexPath := filepath.Join(frontendPath, "index.html")
+		http.ServeFile(w, r, indexPath)
 	}))
 
 	// TLS configuration (strict)
