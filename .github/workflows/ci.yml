@@ -269,16 +269,28 @@ jobs:
             port: 9090
           EOF
 
-      - name: Build and start services
+      - name: Build backend service
         run: |
           docker compose build storage-sage-backend
-          docker compose up -d storage-sage-backend
+
+      - name: Start backend service (without dependencies)
+        run: |
+          # Start only the backend, skipping dependency checks
+          docker run -d \
+            --name storage-sage-backend \
+            --network bridge \
+            -p 8443:8443 \
+            -v "$(pwd)/web/certs:/app/certs:ro" \
+            -v "$(pwd)/secrets/jwt_secret.txt:/run/secrets/jwt_secret:ro" \
+            -e JWT_SECRET_FILE=/run/secrets/jwt_secret \
+            -e JWT_EXPIRY=24h \
+            storage-sage:backend-latest
 
       - name: Wait for services to be healthy
         run: |
           echo "Waiting for backend to start..."
           for i in {1..30}; do
-            if docker compose ps | grep storage-sage-backend | grep -q "Up"; then
+            if docker ps | grep storage-sage-backend | grep -q "Up"; then
               echo "✓ Backend container is up"
               break
             fi
@@ -293,7 +305,7 @@ jobs:
         if: always()
         run: |
           echo "=== Backend logs ==="
-          docker compose logs storage-sage-backend || true
+          docker logs storage-sage-backend || true
 
       - name: "Runtime Check 1: Root path (/) returns 200"
         run: |
@@ -357,7 +369,8 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          docker compose down -v
+          docker stop storage-sage-backend || true
+          docker rm storage-sage-backend || true
 
   notify:
     name: Notify on Failure
