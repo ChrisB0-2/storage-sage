@@ -185,13 +185,36 @@ func main() {
 	// Start server in goroutine
 	go func() {
 		logger.Printf("Starting HTTPS server on %s", ServerAddr)
-		// Use /app/certs in container, fallback to ../certs for local development
-		certPath := "certs/server.crt"
-		keyPath := "certs/server.key"
-		if _, err := os.Stat(certPath); os.IsNotExist(err) {
-			certPath = "../certs/server.crt"
-			keyPath = "../certs/server.key"
+
+		// Get TLS cert/key paths from environment, with fallback to defaults
+		certPath := os.Getenv("TLS_CERT_PATH")
+		keyPath := os.Getenv("TLS_KEY_PATH")
+
+		if certPath == "" || keyPath == "" {
+			// Default paths: try /app/certs (container), then certs/ (local with WORKDIR=/app), then ../certs (local dev)
+			certPath = "/app/certs/server.crt"
+			keyPath = "/app/certs/server.key"
+			if _, err := os.Stat(certPath); os.IsNotExist(err) {
+				certPath = "certs/server.crt"
+				keyPath = "certs/server.key"
+				if _, err := os.Stat(certPath); os.IsNotExist(err) {
+					certPath = "../certs/server.crt"
+					keyPath = "../certs/server.key"
+				}
+			}
 		}
+
+		logger.Printf("Using TLS certificate: %s", certPath)
+		logger.Printf("Using TLS key: %s", keyPath)
+
+		// Verify cert and key are readable before attempting to start server
+		if _, err := os.Stat(certPath); err != nil {
+			logger.Fatalf("Cannot access TLS certificate at %s: %v", certPath, err)
+		}
+		if _, err := os.Stat(keyPath); err != nil {
+			logger.Fatalf("Cannot access TLS key at %s: %v", keyPath, err)
+		}
+
 		if err := srv.ListenAndServeTLS(certPath, keyPath); err != nil && err != http.ErrServerClosed {
 			logger.Fatalf("Server failed to start: %v", err)
 		}

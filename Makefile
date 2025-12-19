@@ -89,6 +89,10 @@ setup: ## Initial setup (create .env, generate certs, create config)
 		chmod 600 web/certs/server.key; \
 		chmod 644 web/certs/server.crt; \
 		echo "✓ Certificates generated in web/certs/"; \
+		echo ""; \
+		echo "Note: If running in Docker, the backend container runs as UID 1000 (storagesage)."; \
+		echo "If you encounter permission errors, ensure certs are readable by UID 1000:"; \
+		echo "  sudo chown 1000:1000 web/certs/server.* (or use your local UID if it matches)"; \
 	fi
 	@if [ ! -f web/config/config.yaml ]; then \
 		echo "Creating default config from example..."; \

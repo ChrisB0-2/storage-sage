@@ -256,8 +256,16 @@ jobs:
             -keyout web/certs/server.key \
             -out web/certs/server.crt \
             -subj "/CN=localhost"
+
+          # Fix ownership for container user (UID 1000 = storagesage)
+          # Container runs as non-root user storagesage (UID 1000, GID 1000)
+          # Certs created by GitHub Actions runner need to be readable by this user
+          sudo chown 1000:1000 web/certs/server.key web/certs/server.crt
           chmod 600 web/certs/server.key
           chmod 644 web/certs/server.crt
+
+          echo "Certificate ownership and permissions:"
+          ls -la web/certs/
 
       - name: Create default config
         run: |
@@ -278,6 +286,16 @@ jobs:
 
       - name: Start backend service (without dependencies)
         run: |
+          echo "=== Pre-flight checks ==="
+          echo "Container user will be: storagesage (UID 1000, GID 1000)"
+          echo ""
+          echo "Certificate permissions on host:"
+          ls -la web/certs/
+          echo ""
+          echo "JWT secret permissions on host:"
+          ls -la secrets/jwt_secret.txt
+          echo ""
+
           # Start only the backend, skipping dependency checks
           # Use host network so we can access via 127.0.0.1
           docker run -d \
@@ -287,21 +305,33 @@ jobs:
             -v "$(pwd)/secrets/jwt_secret.txt:/run/secrets/jwt_secret:ro" \
             -e JWT_SECRET_FILE=/run/secrets/jwt_secret \
             -e JWT_EXPIRY=24h \
+            -e TLS_CERT_PATH=/app/certs/server.crt \
+            -e TLS_KEY_PATH=/app/certs/server.key \
             storage-sage:backend-latest
 
+          echo ""
           echo "Backend container started"
           echo "Waiting 3 seconds for container to initialize..."
           sleep 3
 
           # Verify container is running
           if ! docker ps | grep -q storage-sage-backend; then
+            echo ""
             echo "❌ ERROR: Container failed to start or exited immediately"
             echo ""
-            echo "=== Container Status ==="
+            echo "=== Diagnostics ==="
+            echo ""
+            echo "--- Container Status ---"
             docker ps -a | grep storage-sage-backend || true
             echo ""
-            echo "=== Container Logs ==="
+            echo "--- Container User ---"
+            docker run --rm storage-sage:backend-latest id 2>/dev/null || echo "Cannot check container user"
+            echo ""
+            echo "--- Container Logs ---"
             docker logs storage-sage-backend 2>&1 || true
+            echo ""
+            echo "--- Certificate Permissions in Container ---"
+            docker run --rm -v "$(pwd)/web/certs:/app/certs:ro" storage-sage:backend-latest ls -la /app/certs/ 2>/dev/null || echo "Cannot check cert permissions in container"
             exit 1
           fi
           echo "✓ Container is running"

@@ -101,6 +101,9 @@ services:
       - JWT_EXPIRY=${JWT_EXPIRY:-24h}
       - PROMETHEUS_URL=http://host.docker.internal:9091  # System Prometheus
       - TZ=${TZ:-UTC}
+      # TLS certificate paths (configurable, defaults to /app/certs in code)
+      - TLS_CERT_PATH=${TLS_CERT_PATH:-/app/certs/server.crt}
+      - TLS_KEY_PATH=${TLS_KEY_PATH:-/app/certs/server.key}
     depends_on:
       # Remove prometheus from depends_on
       storage-sage-daemon:
