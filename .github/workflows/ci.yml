@@ -271,8 +271,8 @@ jobs:
 
       - name: Build and start services
         run: |
-          docker compose build storage-sage-backend storage-sage-daemon
-          docker compose up -d storage-sage-backend storage-sage-daemon
+          docker compose build storage-sage-backend
+          docker compose up -d storage-sage-backend
 
       - name: Wait for services to be healthy
         run: |
@@ -294,8 +294,6 @@ jobs:
         run: |
           echo "=== Backend logs ==="
           docker compose logs storage-sage-backend || true
-          echo "=== Daemon logs ==="
-          docker compose logs storage-sage-daemon || true
 
       - name: "Runtime Check 1: Root path (/) returns 200"
         run: |
