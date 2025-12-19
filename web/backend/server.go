@@ -140,6 +140,14 @@ func main() {
 	}
 
 	logger.Printf("Serving frontend from: %s", frontendPath)
+
+	// Explicitly handle /index.html to prevent 301 redirects from catch-all handler
+	// Must be registered BEFORE PathPrefix("/") to take precedence
+	router.HandleFunc("/index.html", func(w http.ResponseWriter, r *http.Request) {
+		indexPath := filepath.Join(frontendPath, "index.html")
+		http.ServeFile(w, r, indexPath)
+	}).Methods("GET", "HEAD")
+
 	// Serve static files and handle React Router client-side routing
 	router.PathPrefix("/").Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Don't interfere with API routes
