@@ -84,8 +84,9 @@ services:
     volumes:
       # Configuration - make writable for UI updates
       - ./web/config:/etc/storage-sage:rw
-      # TLS certificates
-      - ./web/certs:/app/certs:ro
+      # TLS certificates (OPTIONAL - if not mounted, will be auto-generated at runtime)
+      # Uncomment the line below to use pre-existing certificates from ./web/certs
+      # - ./web/certs:/app/certs:ro
       # Frontend build (served by backend) - check both dist and build
       - ./web/frontend/dist:/app/frontend/dist:ro
       - ./web/frontend/build:/app/frontend/build:ro
@@ -101,9 +102,11 @@ services:
       - JWT_EXPIRY=${JWT_EXPIRY:-24h}
       - PROMETHEUS_URL=http://host.docker.internal:9091  # System Prometheus
       - TZ=${TZ:-UTC}
-      # TLS certificate paths (configurable, defaults to /app/certs in code)
-      - TLS_CERT_PATH=${TLS_CERT_PATH:-/app/certs/server.crt}
-      - TLS_KEY_PATH=${TLS_KEY_PATH:-/app/certs/server.key}
+      # TLS certificate paths (configurable)
+      # Default: /tmp/certs (auto-generated at runtime by entrypoint.sh)
+      # To use mounted certs: set to /app/certs/server.crt and uncomment volume mount above
+      - TLS_CERT_PATH=${TLS_CERT_PATH:-/tmp/certs/server.crt}
+      - TLS_KEY_PATH=${TLS_KEY_PATH:-/tmp/certs/server.key}
     depends_on:
       # Remove prometheus from depends_on
       storage-sage-daemon:

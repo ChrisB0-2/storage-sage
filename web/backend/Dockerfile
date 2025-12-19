@@ -59,13 +59,14 @@ WORKDIR /build
 # ============================================
 FROM alpine:3.19
 
-# Install runtime dependencies including sqlite
+# Install runtime dependencies including sqlite and openssl for cert generation
 RUN apk add --no-cache \
     ca-certificates \
     tzdata \
     wget \
     sqlite \
-    sqlite-libs
+    sqlite-libs \
+    openssl
 
 # Create non-root user and group
 RUN addgroup -g 1000 -S storagesage && \
@@ -75,10 +76,11 @@ RUN addgroup -g 1000 -S storagesage && \
 RUN mkdir -p /app/certs /app/logs /app/frontend/dist && \
     chown -R storagesage:storagesage /app
 
-# Copy binary from backend builder
+# Copy binary and entrypoint script from backend builder
 COPY --from=backend-builder /build/storage-sage-web /app/storage-sage-web
-RUN chown storagesage:storagesage /app/storage-sage-web && \
-    chmod +x /app/storage-sage-web
+COPY --from=backend-builder /build/cmd/storage-sage/entrypoint.sh /app/entrypoint.sh
+RUN chown storagesage:storagesage /app/storage-sage-web /app/entrypoint.sh && \
+    chmod +x /app/storage-sage-web /app/entrypoint.sh
 
 # Copy frontend build artifacts from frontend builder
 COPY --from=frontend-builder --chown=storagesage:storagesage /build/frontend/dist /app/frontend/dist
@@ -96,5 +98,7 @@ EXPOSE 8443
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-check-certificate -qO- https://localhost:8443/api/v1/health || exit 1
 
-# Run the web server
-ENTRYPOINT ["/app/storage-sage-web"]
+# Run the web server via entrypoint script
+# The entrypoint generates TLS certificates if needed and starts the backend
+# Certificate paths can be customized via TLS_KEY_PATH and TLS_CERT_PATH env vars
+ENTRYPOINT ["/app/entrypoint.sh"]

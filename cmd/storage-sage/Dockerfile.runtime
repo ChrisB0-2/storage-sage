@@ -4,12 +4,13 @@
 
 FROM alpine:3.19
 
-# Install runtime dependencies including sqlite
+# Install runtime dependencies including sqlite and openssl for cert generation
 RUN apk add --no-cache \
     ca-certificates \
     tzdata \
     sqlite \
-    sqlite-libs
+    sqlite-libs \
+    openssl
 
 # Create non-root user and group
 RUN addgroup -g 1000 -S storagesage && \
@@ -19,10 +20,11 @@ RUN addgroup -g 1000 -S storagesage && \
 RUN mkdir -p /app/config /app/logs /app/data && \
     chown -R storagesage:storagesage /app
 
-# Copy pre-built binary (created by build job, copied to context by CI)
+# Copy pre-built binary and entrypoint script (created by build job, copied to context by CI)
 COPY storage-sage /app/storage-sage
-RUN chown storagesage:storagesage /app/storage-sage && \
-    chmod +x /app/storage-sage
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chown storagesage:storagesage /app/storage-sage /app/entrypoint.sh && \
+    chmod +x /app/storage-sage /app/entrypoint.sh
 
 # Set working directory
 WORKDIR /app
@@ -37,8 +39,10 @@ EXPOSE 9090
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD test -x /app/storage-sage || exit 1
 
-# Run the storage-sage daemon
+# Run the storage-sage daemon via entrypoint script
+# The entrypoint generates TLS certificates if needed and starts the backend
 # Default config path: /etc/storage-sage/config.yaml
 # Override with: docker run ... storage-sage -config /path/to/config.yaml
-ENTRYPOINT ["/app/storage-sage"]
+# Certificate paths can be customized via TLS_KEY_PATH and TLS_CERT_PATH env vars
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["-config", "/etc/storage-sage/config.yaml"]
