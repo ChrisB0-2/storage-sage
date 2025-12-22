@@ -2,7 +2,7 @@
 # This Dockerfile expects pre-built binaries in dist/ (built by CI)
 # Part of "Build Once, Deploy Many" pattern
 
-FROM alpine:3.19
+FROM alpine:3.23
 
 # Install runtime dependencies including sqlite and openssl for cert generation
 RUN apk add --no-cache \
